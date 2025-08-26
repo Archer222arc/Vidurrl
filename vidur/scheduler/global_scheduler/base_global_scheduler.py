@@ -36,6 +36,9 @@ class BaseGlobalScheduler(ABC):
             for replica_id, replica in replicas.items()
         }
         self._request_queue = []
+        self._metric_store = None
+        self._current_time = 0.0
+
 
     def sort_requests(self) -> None:
         self._request_queue.sort(key=lambda request: request._arrived_at)
@@ -56,6 +59,21 @@ class BaseGlobalScheduler(ABC):
             replica_scheduler.is_empty()
             for replica_scheduler in self._replica_schedulers.values()
         )
+    
+    def set_runtime_context(self, current_time, metric_store):
+        """把当前仿真时间和 MetricsStore 下发给所有副本调度器"""
+        self._current_time = float(current_time)
+        self._metric_store = metric_store
+
+        if hasattr(self, "_replica_schedulers"):
+            # 关键：遍历 values() 才能拿到各副本调度器实例
+            for rs in self._replica_schedulers.values():
+                if hasattr(rs, "set_runtime_context"):
+                    rs.set_runtime_context(self._current_time, self._metric_store)
+             # 打点：确认全局调度器本身被调用 & 向下转发了多少个
+        #print(f"[ctx→global] t={self._current_time}, ms={'ok' if metric_store else 'None'}, fanout={fanout}")
+
+
 
     @abstractmethod
     def schedule(self) -> List[Tuple[int, Request]]:

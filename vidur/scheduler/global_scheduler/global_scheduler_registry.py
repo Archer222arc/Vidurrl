@@ -7,7 +7,12 @@ from vidur.scheduler.global_scheduler.round_robin_global_scheduler import (
 )
 from vidur.types import GlobalSchedulerType
 from vidur.utils.base_registry import BaseRegistry
+from vidur.scheduler.global_scheduler.random_global_scheduler_with_state import RandomGlobalSchedulerWithState
 
+from vidur.scheduler.global_scheduler.dqn_global_scheduler_online import (
+    DQNGlobalSchedulerOnline,
+)
+from vidur.scheduler.global_scheduler.ppo_global_scheduler_online import PPOGlobalSchedulerOnline
 
 class GlobalSchedulerRegistry(BaseRegistry):
     @classmethod
@@ -20,3 +25,7 @@ GlobalSchedulerRegistry.register(
     GlobalSchedulerType.ROUND_ROBIN, RoundRobinGlobalScheduler
 )
 GlobalSchedulerRegistry.register(GlobalSchedulerType.LOR, LORGlobalScheduler)
+# 新注册（关键）
+GlobalSchedulerRegistry.register(GlobalSchedulerType.RANDOM_WITH_STATE, RandomGlobalSchedulerWithState)
+GlobalSchedulerRegistry.register(GlobalSchedulerType.GLOBALSCHEDULEONLINE, DQNGlobalSchedulerOnline)
+GlobalSchedulerRegistry.register(GlobalSchedulerType.PPOONLINE, PPOGlobalSchedulerOnline)

@@ -1,6 +1,8 @@
+# file: vidur/metrics/metrics_store.py
 import os
 from functools import reduce
 from typing import Dict, List
+import math  # for isfinite
 
 import pandas as pd
 import plotly_express as px
@@ -32,7 +34,6 @@ def if_write_metrics(func):
     def wrapper(self, *args, **kwargs):
         if self._config.write_metrics:
             return func(self, *args, **kwargs)
-
     return wrapper
 
 
@@ -48,11 +49,13 @@ TIME_STR_MS = "Time (ms)"
 
 
 class MetricsStore:
+    """Collects metrics and exports plots & CSVs. Extra: throughput/avg_latency timeline."""
 
     def __init__(self, simulation_config: SimulationConfig) -> None:
         self._simulation_config = simulation_config
         self._config = self._simulation_config.metrics_config
         self._last_request_arrived_at = None
+        self._current_time = 0.0
 
         # copy config
         self._num_replicas = self._simulation_config.cluster_config.num_replicas
@@ -236,6 +239,56 @@ class MetricsStore:
 
         self._init_wandb()
 
+        # timeline samples for DQN diagnostics
+        self._tl_times: List[float] = []
+        self._tl_tp: List[float] = []
+        self._tl_lat: List[float] = []
+         # --- NEW: for instantaneous/windowed metrics ---
+        self._completed_ts: List[float] = []   # completion timestamps (seconds)
+        self._completed_e2e: List[float] = []  # corresponding E2E latencies (seconds)
+
+    # ---------- extras for throughput/latency artifacts ----------
+
+    def _write_throughput_latency_artifacts(self) -> None:
+        """Emit CSV and PNGs for throughput/latency timeline."""
+        out_dir = self._config.output_dir
+        os.makedirs(out_dir, exist_ok=True)
+
+        # CSV
+        csv_path = f"{out_dir}/throughput_latency.csv"
+        with open(csv_path, "w", encoding="utf-8") as f:
+            f.write("time,throughput,avg_latency\n")
+            for t, tp, lat in zip(self._tl_times, self._tl_tp, self._tl_lat):
+                f.write(f"{t},{tp},{lat}\n")
+
+        # PNG (optional)
+        if not self._config.store_plots or not self._tl_times:
+            return
+        try:
+            import matplotlib.pyplot as plt  # lazy import
+        except Exception:
+            return
+
+        plt.figure()
+        plt.plot(self._tl_times, self._tl_tp)
+        plt.xlabel("time (s)")
+        plt.ylabel("throughput (req/s)")
+        plt.title("Throughput over time")
+        plt.tight_layout()
+        plt.savefig(f"{out_dir}/throughput.png")
+        plt.close()
+
+        plt.figure()
+        plt.plot(self._tl_times, self._tl_lat)
+        plt.xlabel("time (s)")
+        plt.ylabel("avg latency (s)")
+        plt.title("Average latency over time")
+        plt.tight_layout()
+        plt.savefig(f"{out_dir}/latency.png")
+        plt.close()
+
+    # -------------------------------------------------------------
+
     def _init_wandb(self):
         if (
             not self._config.write_metrics
@@ -300,6 +353,102 @@ class MetricsStore:
                 labels={"x": x_label, "y": y_label},
             )
             fig.write_image(f"{base_path}/{plot_name}.png")
+
+    # ---------- time/throughput/latency sampling ----------
+
+    def set_current_time(self, t: float):
+        self._current_time = float(t)
+        # sample throughput/latency after time update（只记录有限值，避免 NaN/Inf 传染到 DQN）
+        try:
+            tp = float(self.get_throughput(self._current_time))
+        except Exception:
+            tp = float("nan")
+        try:
+            lat = float(self.get_average_latency())
+        except Exception:
+            lat = float("nan")
+
+        if math.isfinite(tp) and math.isfinite(lat):
+            self._tl_times.append(self._current_time)
+            self._tl_tp.append(tp)
+            self._tl_lat.append(lat)
+
+    def get_current_time(self) -> float:
+        return self._current_time
+
+    def get_average_latency(self) -> float:
+        """Average request E2E latency in seconds."""
+        series = self._request_metrics_time_distributions.get(
+            RequestMetricsTimeDistributions.REQUEST_E2E_TIME
+        )
+        if series is None:
+            return 0.0
+        df = series._to_df()
+        col = RequestMetricsTimeDistributions.REQUEST_E2E_TIME.value
+        if df.empty or col not in df.columns:
+            return 0.0
+        return float(df[col].mean())
+
+    def get_throughput(self, current_time=None) -> float:
+        """Throughput = completed_requests / current_time."""
+        if current_time is None:
+            current_time = self._current_time
+        if not current_time or current_time <= 0:
+            return 0.0
+
+        series = self._request_metrics_time_distributions.get(
+            RequestMetricsTimeDistributions.REQUEST_E2E_TIME
+        )
+        if series is None:
+            return 0.0
+        df = series._to_df()
+        if df.empty:
+            return 0.0
+        completed = int(df.shape[0])
+        return float(completed / current_time)
+    def get_instant_throughput(self, window_sec: float = 1.0, current_time: float = None) -> float:
+        """最近 window_sec 秒内的吞吐（完成数 / window长度）"""
+        if current_time is None:
+            current_time = self._current_time
+        if window_sec <= 0 or current_time <= 0:
+            return 0.0
+        t0 = current_time - float(window_sec)
+        # 列表是按时间顺序 append 的，直接线性扫也行；数据大时可用 bisect 加速
+        cnt = 0
+        for ts in reversed(self._completed_ts):
+            if ts <= t0:  # 反向扫描，遇到窗口外即可 break
+                break
+            if ts <= current_time:
+                cnt += 1
+        return float(cnt) / float(window_sec)
+
+    def get_instant_latency(self, window_sec: float = 1.0, current_time: float = None) -> float:
+        """最近 window_sec 秒内完成请求的 E2E 平均时延；窗口内无完成则返回当前全局均值（或 0）"""
+        if current_time is None:
+            current_time = self._current_time
+        if window_sec <= 0 or current_time <= 0:
+            return 0.0
+        t0 = current_time - float(window_sec)
+
+        # 收集窗口内的 e2e
+        vals = []
+        # 反向扫描：_completed_ts 单调递增
+        for ts, e2e in zip(reversed(self._completed_ts), reversed(self._completed_e2e)):
+            if ts <= t0:
+                break
+            if ts <= current_time:
+                vals.append(float(e2e))
+
+        if vals:
+            return float(sum(vals) / len(vals))
+        # 窗口里没有完成请求：回退到全局平均（已有方法）
+        try:
+            return float(self.get_average_latency())
+        except Exception:
+            return 0.0
+
+
+    # ---------- existing stores ----------
 
     def _store_operation_metrics(self, base_plot_path: str):
         if not self._config.store_operation_metrics:
@@ -416,7 +565,7 @@ class MetricsStore:
                 f"{dataseries._metric_name}_per_batch",
                 y_axis_label=y_axis_label,
                 y_cumsum=False,
-            ),
+            )
 
         for dataseries in self._batch_metrics_count_distribution_per_batch.values():
             dataseries.plot_step(
@@ -424,7 +573,7 @@ class MetricsStore:
                 f"{dataseries._metric_name}_per_batch",
                 y_axis_label=COUNT_STR,
                 y_cumsum=False,
-            ),
+            )
 
         all_batch_metrics = list(
             self._batch_metrics_count_distribution_per_batch.values()
@@ -483,6 +632,9 @@ class MetricsStore:
         self._store_completion_metrics(dir_plot_path)
         self._store_operation_metrics(dir_plot_path)
         self._store_utilization_metrics(dir_plot_path)
+
+        # --- ensure TL artifacts are written at the end ---
+        self._write_throughput_latency_artifacts()
 
     @if_write_metrics
     def on_request_arrival(self, time: float, request: Request) -> None:
@@ -578,11 +730,18 @@ class MetricsStore:
         self._request_metrics_histogram[
             RequestMetricsHistogram.REQUEST_NUM_RESTARTS
         ].put(request.id, request.num_restarts)
+                # --- NEW: record completion time + e2e for windowed metrics ---
+        try:
+            self._completed_ts.append(float(request.completed_at))
+            self._completed_e2e.append(float(request.e2e_time))
+        except Exception:
+            pass
+
 
     def _update_per_token_execution_times(
         self, time: float, request: Request, batch: Batch
     ) -> None:
-        # if prefill has just finished in this iteration, update the prefill completion time series
+        # only when prefill just finished
         if (
             time == request.prefill_completed_at
             and self._config.store_token_completion_metrics
@@ -594,10 +753,8 @@ class MetricsStore:
                 request.num_prefill_tokens,
             )
 
-        # determine if this was prefill or decode token
         if not request.has_started_decode:
             return
-
         if not self._config.store_token_completion_metrics:
             return
 
@@ -684,7 +841,6 @@ class MetricsStore:
     ) -> None:
         if not self._config.store_utilization_metrics:
             return
-
         self._replica_memory_usage[replica_id - 1].put(time, memory_usage_percent)
 
     @if_write_metrics
@@ -819,3 +975,4 @@ class MetricsStore:
             return
         self._replica_busy_time[replica_id - 1][stage_id - 1].put(time, 0)
         self._replica_mfu[replica_id - 1][stage_id - 1].put(time, 0)
+

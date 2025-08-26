@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional
 
+from typing import Literal
 from vidur.config.base_poly_config import BasePolyConfig
 from vidur.config.device_sku_config import BaseDeviceSKUConfig
 from vidur.config.flat_dataclass import create_flat_dataclass
@@ -20,6 +21,7 @@ from vidur.types import (
     RequestIntervalGeneratorType,
     RequestLengthGeneratorType,
 )
+from enum import Enum
 
 logger = init_logger(__name__)
 
@@ -488,7 +490,121 @@ class LORGlobalSchedulerConfig(BaseGlobalSchedulerConfig):
     @staticmethod
     def get_type():
         return GlobalSchedulerType.LOR
+@dataclass
+class RandomWithStateGlobalSchedulerConfig(BaseGlobalSchedulerConfig):
+    """随机路由 + 全量 state 采集/可选打印"""
+    debug_dump_global_state: bool = field(
+        default=False,
+        metadata={"help": "Print detailed replica state at each schedule()."},
+    )
+    max_queue_requests_per_replica: int = field(
+        default=4,
+        metadata={"help": "How many per-replica queued requests to include in state."},
+    )
 
+    @staticmethod
+    def get_type():
+        return GlobalSchedulerType.RANDOM_WITH_STATE
+class RewardMode(str, Enum):
+    delta = "delta"
+    instant = "instant"
+@dataclass
+class DQNGlobalSchedulerOnlineConfig(BaseGlobalSchedulerConfig):
+    """在线 DQN 的所有可调超参"""
+    # 状态构造
+    max_queue_requests_per_replica: int = field(
+        default=4,
+        metadata={"help": "How many per-replica queued requests to include in state."},
+    )
+    debug_dump_global_state: bool = field(
+        default=False,
+        metadata={"help": "Print detailed replica state at each schedule()."},
+    )
+    # 奖励
+    reward_latency_weight: float = field(
+        default=1.0,
+        metadata={"help": "Penalty weight for latency increase in the reward."},
+    )
+    balance_penalty_weight: float = field(
+    default=0.1,
+    metadata={"help": "用于负载平衡惩罚的权重；0禁用。"},
+)
+    # DQN 超参
+    lr: float = field(default=5e-3, metadata={"help": "Learning rate."})
+    gamma: float = field(default=0.95, metadata={"help": "Discount factor."})
+    epsilon: float = field(default=0.1, metadata={"help": "Epsilon for ε-greedy."})
+    epsilon_min: float = field(default=0.01, metadata={"help": "Min epsilon."})
+    epsilon_decay: float = field(default=0.995, metadata={"help": "Epsilon decay."})
+    buffer_size: int = field(default=10000, metadata={"help": "Replay buffer size."})
+    batch_size: int = field(default=32, metadata={"help": "SGD batch size."})
+        # ===== 新增：PPO 相关可调超参 =====
+    reward_mode: RewardMode = RewardMode.delta   # 你要“用回最开始的奖励”，用 delta
+    gae_lambda: float = 0.95
+    clip_ratio: float = 0.2
+    entropy_coef: float = 0.01
+    value_coef: float = 0.5
+    epochs: int = 4
+    rollout_len: int = 128
+    minibatch_size: int = 64
+    max_grad_norm: float = 0.5
+    hidden_size: int = 128
+    layer_N: int = 2
+    gru_layers: int = 2
+
+    @staticmethod
+    def get_type():
+        return GlobalSchedulerType.GLOBALSCHEDULEONLINE
+from dataclasses import dataclass
+from vidur.types import GlobalSchedulerType
+
+@dataclass
+class PPOGlobalSchedulerOnlineConfig(DQNGlobalSchedulerOnlineConfig):
+    """
+    PPO Online 调度器的配置。为了省事，复用 DQN 的字段和 CLI 参数；
+    仅 get_type() 不同，使其在 CLI 上成为一个新的可选类型 'ppoonline'。
+    """
+     # 状态构造
+    max_queue_requests_per_replica: int = field(
+        default=4,
+        metadata={"help": "How many per-replica queued requests to include in state."},
+    )
+    debug_dump_global_state: bool = field(
+        default=False,
+        metadata={"help": "Print detailed replica state at each schedule()."},
+    )
+    # 奖励
+    reward_latency_weight: float = field(
+        default=1.0,
+        metadata={"help": "Penalty weight for latency increase in the reward."},
+    )
+    balance_penalty_weight: float = field(
+    default=0.1,
+    metadata={"help": "用于负载平衡惩罚的权重；0禁用。"},
+)
+    # DQN 超参
+    lr: float = field(default=5e-3, metadata={"help": "Learning rate."})
+    gamma: float = field(default=0.95, metadata={"help": "Discount factor."})
+    epsilon: float = field(default=0.1, metadata={"help": "Epsilon for ε-greedy."})
+    epsilon_min: float = field(default=0.01, metadata={"help": "Min epsilon."})
+    epsilon_decay: float = field(default=0.995, metadata={"help": "Epsilon decay."})
+    buffer_size: int = field(default=10000, metadata={"help": "Replay buffer size."})
+    batch_size: int = field(default=32, metadata={"help": "SGD batch size."})
+        # ===== 新增：PPO 相关可调超参 =====
+    reward_mode: RewardMode = RewardMode.delta   # 你要“用回最开始的奖励”，用 delta
+    gae_lambda: float = 0.95
+    clip_ratio: float = 0.2
+    entropy_coef: float = 0.01
+    value_coef: float = 0.5
+    epochs: int = 4
+    rollout_len: int = 32
+    minibatch_size: int = 64
+    max_grad_norm: float = 0.5
+    hidden_size: int = 128
+    layer_N: int = 2
+    gru_layers: int = 2
+    @staticmethod
+    def get_type():
+        return GlobalSchedulerType.PPOONLINE
 
 @dataclass
 class BaseExecutionTimePredictorConfig(BasePolyConfig):

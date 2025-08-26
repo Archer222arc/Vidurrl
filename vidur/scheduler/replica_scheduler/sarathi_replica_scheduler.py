@@ -4,6 +4,20 @@ from vidur.entities.batch import Batch, Request
 from vidur.scheduler.replica_scheduler.base_replica_scheduler import (
     BaseReplicaScheduler,
 )
+def dump_request(r):
+    fields = [
+            "id",
+            "arrived_at",
+            "num_prefill_tokens",
+            "num_processed_tokens",
+            "is_prefill_complete",
+            "completed",
+            # 如果你的类里真有，就会打印出来；没有就显示None
+            "num_decode_tokens",
+            "priority",
+        ]
+    kv = ", ".join(f"{k}={getattr(r, k, None)}" for k in fields)
+    print("    " + kv)
 
 
 class SarathiReplicaScheduler(BaseReplicaScheduler):
@@ -83,7 +97,30 @@ class SarathiReplicaScheduler(BaseReplicaScheduler):
 
         return next_num_tokens
 
+
     def _get_next_batch(self) -> Batch:
+        # 输出当前副本状态
+        '''print(f"[Replica {self._replica_id}] 调度前状态：")
+        print(f"  请求队列长度: {len(self._request_queue)}")
+        print(f"  已分配blocks: {self._num_allocated_blocks}/{self._config.num_blocks}")
+        print(f"  预占用请求数: {len(self._preempted_requests)}")
+        print(f"  allocation_map: {self._allocation_map}")
+        
+        print(f"[Replica {self._replica_id}] 队列明细（len={len(self._request_queue)}）:")
+        for req in self._request_queue:
+            dump_request(req)
+        # 预占用明细
+        print(f"[Replica {self._replica_id}] _preempted_requests（len={len(self._preempted_requests)}）:")
+        for r in self._preempted_requests:
+            dump_request(r)
+        # 调度前打印吞吐与延迟（确保已通过 set_runtime_context 注入了 _metric_store/_current_time）
+        if getattr(self, "_metric_store", None) is not None:
+            avg_latency = self._metric_store.get_average_latency()
+            throughput  = self._metric_store.get_throughput(self._current_time)  # 若已在 MetricsStore 维护 current_time，也可不传参
+            print(f"[Scheduler] 当前吞吐量: {throughput} req/s, 平均延迟: {avg_latency} s")
+        else:
+            print("[Scheduler] 无 metric_store 上下文（未注入）")'''
+
         requests = []
         num_tokens = []
         skipped_requests = []

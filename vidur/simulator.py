@@ -46,7 +46,10 @@ class Simulator:
         )
 
         self._init_event_queue()
-        atexit.register(self._write_output)
+        #atexit.register(self._write_output)
+               # 保险：创建完成后立刻注入一次（t=0），避免第一轮调度前拿不到上下文
+        if hasattr(self._scheduler, "set_runtime_context"):
+            self._scheduler.set_runtime_context(self._time, self._metric_store)
 
     @property
     def scheduler(self) -> BaseGlobalScheduler:
@@ -64,6 +67,8 @@ class Simulator:
         while self._event_queue and not self._terminate:
             _, event = heapq.heappop(self._event_queue)
             self._set_time(event._time)
+            self._scheduler.set_runtime_context(self._time, self._metric_store)
+            self._metric_store.set_current_time(self._time)
             new_events = event.handle_event(self._scheduler, self._metric_store)
             self._add_events(new_events)
 
@@ -78,6 +83,11 @@ class Simulator:
         assert self._scheduler.is_empty() or self._terminate
 
         logger.info(f"Simulation ended at: {self._time}s")
+                # 在解释器关闭前立即写输出，避免 atexit 阶段调用 plotly/kaleido 出错
+        try:
+            self._write_output()
+        except Exception:
+            logger.exception("Failed to write output")
 
     def _write_output(self) -> None:
         logger.info("Writing output")

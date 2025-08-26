@@ -79,6 +79,11 @@ class BaseReplicaScheduler(ABC):
     @property
     def memory_usage_percent(self) -> int:
         return (self._num_allocated_blocks * 100) / self._config.num_blocks
+    def set_runtime_context(self, current_time, metric_store):
+         self._current_time = float(current_time)
+         self._metric_store = metric_store
+         rid = getattr(self, "_replica_id", "?")
+         #print(f"[ctx→replica] replica={rid} set: t={self._current_time}, ms={'ok' if metric_store else 'None'}")
 
     def is_empty(self) -> bool:
         return (

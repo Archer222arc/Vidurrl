@@ -1,3 +1,28 @@
+
+python -m vidur.main `
+  --cluster_config_num_replicas 4 `
+  --global_scheduler_config_type ppoonline `
+  --p_p_o_global_scheduler_online_config_debug_dump_global_state `
+  --p_p_o_global_scheduler_online_config_max_queue_requests_per_replica 8 `  #控制拼接state的req数量
+  --p_p_o_global_scheduler_online_config_lr 0.0003 `
+  --p_p_o_global_scheduler_online_config_gamma 0.95 `
+  --p_p_o_global_scheduler_online_config_reward_latency_weight 1.5 `
+  --p_p_o_global_scheduler_online_config_balance_penalty_weight 0 `
+  --p_p_o_global_scheduler_online_config_entropy_coef 0.002 ` #控制探索衰减
+  --synthetic_request_generator_config_num_requests 500 `
+  --interval_generator_config_type poisson `
+  --poisson_request_interval_generator_config_qps 2 `
+  --metrics_config_subsamples 200000 `
+  *> .\run.log
+
+所有可调超参见\vidur\vidur\config\config.py
+
+
+
+
+
+
+
 # Vidur: LLM Inference System Simulator
 
 Vidur is a high-fidelity and extensible LLM inference system simulator. It can help you with:
@@ -165,4 +190,6 @@ trademarks or logos is subject to and must follow
 [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general).
 Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
 Any use of third-party trademarks or logos are subject to those third-party's policies.
+
+
 
