@@ -12,7 +12,7 @@ from vidur.scheduler.global_scheduler.random_global_scheduler_with_state import 
 from vidur.scheduler.global_scheduler.dqn_global_scheduler_online import (
     DQNGlobalSchedulerOnline,
 )
-from vidur.scheduler.global_scheduler.ppo_global_scheduler_online import PPOGlobalSchedulerOnline
+from vidur.scheduler.global_scheduler.ppo_scheduler_modular import PPOGlobalSchedulerModular
 
 class GlobalSchedulerRegistry(BaseRegistry):
     @classmethod
@@ -28,4 +28,7 @@ GlobalSchedulerRegistry.register(GlobalSchedulerType.LOR, LORGlobalScheduler)
 # 新注册（关键）
 GlobalSchedulerRegistry.register(GlobalSchedulerType.RANDOM_WITH_STATE, RandomGlobalSchedulerWithState)
 GlobalSchedulerRegistry.register(GlobalSchedulerType.GLOBALSCHEDULEONLINE, DQNGlobalSchedulerOnline)
+# 原版PPO使用原始实现（梯度问题解决方案）
+from vidur.scheduler.global_scheduler.ppo_global_scheduler_online import PPOGlobalSchedulerOnline
 GlobalSchedulerRegistry.register(GlobalSchedulerType.PPOONLINE, PPOGlobalSchedulerOnline)
+GlobalSchedulerRegistry.register(GlobalSchedulerType.PPO_MODULAR, PPOGlobalSchedulerModular)

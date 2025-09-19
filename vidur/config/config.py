@@ -411,7 +411,7 @@ class MetricsConfig:
         metadata={"help": "Maximum batch index."},
     )
     output_dir: str = field(
-        default="simulator_output",
+        default="outputs/simulator_output",
         metadata={"help": "Output directory."},
     )
     cache_dir: str = field(
@@ -508,6 +508,7 @@ class RandomWithStateGlobalSchedulerConfig(BaseGlobalSchedulerConfig):
 class RewardMode(str, Enum):
     delta = "delta"
     instant = "instant"
+    hybrid = "hybrid"
 @dataclass
 class DQNGlobalSchedulerOnlineConfig(BaseGlobalSchedulerConfig):
     """在线 DQN 的所有可调超参"""
@@ -538,15 +539,15 @@ class DQNGlobalSchedulerOnlineConfig(BaseGlobalSchedulerConfig):
     buffer_size: int = field(default=10000, metadata={"help": "Replay buffer size."})
     batch_size: int = field(default=32, metadata={"help": "SGD batch size."})
         # ===== 新增：PPO 相关可调超参 =====
-    reward_mode: RewardMode = RewardMode.delta   # 你要“用回最开始的奖励”，用 delta
+    reward_mode: RewardMode = RewardMode.hybrid   # 混合模式：绝对价值 + 平滑差分，避免静止状态零奖励
     gae_lambda: float = 0.95
-    clip_ratio: float = 0.2
-    entropy_coef: float = 0.01
+    clip_ratio: float = 0.15  # Reduced to prevent aggressive updates
+    entropy_coef: float = 0.15  # Increased further to combat stagnation and encourage active exploration
     value_coef: float = 0.5
-    epochs: int = 4
+    epochs: int = 8  # Increased for better convergence
     rollout_len: int = 128
     minibatch_size: int = 64
-    max_grad_norm: float = 0.5
+    max_grad_norm: float = 1.0
     hidden_size: int = 128
     layer_N: int = 2
     gru_layers: int = 2
@@ -590,21 +591,261 @@ class PPOGlobalSchedulerOnlineConfig(DQNGlobalSchedulerOnlineConfig):
     buffer_size: int = field(default=10000, metadata={"help": "Replay buffer size."})
     batch_size: int = field(default=32, metadata={"help": "SGD batch size."})
         # ===== 新增：PPO 相关可调超参 =====
-    reward_mode: RewardMode = RewardMode.delta   # 你要“用回最开始的奖励”，用 delta
+    reward_mode: RewardMode = RewardMode.hybrid   # 混合模式：绝对价值 + 平滑差分，避免静止状态零奖励
     gae_lambda: float = 0.95
-    clip_ratio: float = 0.2
-    entropy_coef: float = 0.01
+    clip_ratio: float = 0.15  # Reduced to prevent aggressive updates
+    entropy_coef: float = 0.25  # Further increased to combat action collapse
     value_coef: float = 0.5
-    epochs: int = 4
+    epochs: int = 8  # Increased for better convergence
     rollout_len: int = 32
     minibatch_size: int = 64
-    max_grad_norm: float = 0.5
+    max_grad_norm: float = 1.0
+    # Enhanced exploration and regularization
+    target_kl: float = field(
+        default=0.01,
+        metadata={"help": "Target KL divergence for early stopping to prevent policy collapse."},
+    )
+    entropy_min: float = field(
+        default=0.5,
+        metadata={"help": "Minimum entropy threshold to maintain exploration."},
+    )
+    kl_coef: float = field(
+        default=0.2,
+        metadata={"help": "Coefficient for KL regularization loss."},
+    )
+
+    # Warm start and KL regularization parameters
+    enable_warm_start: bool = field(
+        default=False,
+        metadata={"help": "Enable behavior cloning warm start from demonstration data."},
+    )
+    demo_data_path: str = field(
+        default="",
+        metadata={"help": "Path to demonstration data file for warm start."},
+    )
+    pretrained_actor_path: str = field(
+        default="",
+        metadata={"help": "Path to pretrained actor model for warm start."},
+    )
+    kl_ref_coef_initial: float = field(
+        default=0.5,
+        metadata={"help": "Initial KL coefficient for reference policy regularization."},
+    )
+    kl_ref_coef_final: float = field(
+        default=0.0,
+        metadata={"help": "Final KL coefficient for reference policy regularization."},
+    )
+    kl_ref_decay_steps: int = field(
+        default=1000,
+        metadata={"help": "Number of steps to decay KL reference coefficient."},
+    )
+    warmup_steps: int = field(
+        default=500,
+        metadata={"help": "Number of warm-up steps with enhanced exploration."},
+    )
+    entropy_warmup_coef: float = field(
+        default=0.5,
+        metadata={"help": "Additional entropy coefficient during warm-up."},
+    )
+
     hidden_size: int = 128
     layer_N: int = 2
     gru_layers: int = 2
     @staticmethod
     def get_type():
         return GlobalSchedulerType.PPOONLINE
+
+
+@dataclass
+class PPOGlobalSchedulerModularConfig(PPOGlobalSchedulerOnlineConfig):
+    """
+    Modular PPO Global Scheduler configuration.
+
+    Uses the same parameters as PPOGlobalSchedulerOnlineConfig but
+    registers as a different scheduler type for the modular implementation.
+    Includes additional TensorBoard monitoring capabilities.
+    """
+
+    # TensorBoard monitoring configuration
+    enable_tensorboard: bool = field(
+        default=True,
+        metadata={"help": "Enable TensorBoard monitoring for PPO training metrics."},
+    )
+    tensorboard_log_dir: str = field(
+        default="./outputs/runs/ppo_training",
+        metadata={"help": "Directory for TensorBoard logs."},
+    )
+    tensorboard_auto_start: bool = field(
+        default=True,
+        metadata={"help": "Automatically start TensorBoard server during training."},
+    )
+    tensorboard_port: int = field(
+        default=6006,
+        metadata={"help": "Port for TensorBoard server."},
+    )
+    tensorboard_start_retries: int = field(
+        default=3,
+        metadata={"help": "Number of retries for TensorBoard server startup."},
+    )
+    tensorboard_retry_delay: float = field(
+        default=5.0,
+        metadata={"help": "Delay in seconds between TensorBoard startup retries."},
+    )
+    tensorboard_force_kill: bool = field(
+        default=False,
+        metadata={"help": "Force terminate existing TensorBoard process listening on the configured port."},
+    )
+
+    # Metrics export configuration
+    metrics_export_enabled: bool = field(
+        default=False,
+        metadata={"help": "Enable metrics export to CSV/Parquet files."},
+    )
+    metrics_export_format: str = field(
+        default="csv",
+        metadata={"help": "Export format: 'csv' or 'parquet'."},
+    )
+    metrics_export_path: str = field(
+        default="./outputs/runs/ppo_training/exports",
+        metadata={"help": "Directory for exported metrics files."},
+    )
+    metrics_export_interval: int = field(
+        default=50,
+        metadata={"help": "Steps between metrics export flushes."},
+    )
+
+    # Checkpoint management configuration
+    enable_checkpoints: bool = field(
+        default=True,
+        metadata={"help": "Enable automatic checkpoint saving during training."},
+    )
+    checkpoint_dir: str = field(
+        default="./outputs/checkpoints",
+        metadata={"help": "Directory for saving model checkpoints."},
+    )
+    checkpoint_interval: int = field(
+        default=100,
+        metadata={"help": "Steps between automatic checkpoint saves."},
+    )
+    max_checkpoints: int = field(
+        default=5,
+        metadata={"help": "Maximum number of checkpoints to keep."},
+    )
+    load_checkpoint: str = field(
+        default="",
+        metadata={"help": "Path to checkpoint file to load. Empty string means start fresh."},
+    )
+    inference_only: bool = field(
+        default=False,
+        metadata={"help": "Run in inference-only mode without training. Requires load_checkpoint."},
+    )
+
+    # StateBuilder enhanced features configuration
+    enable_enhanced_features: bool = field(
+        default=True,
+        metadata={"help": "Enable enhanced state features for high-frequency dynamics capture."},
+    )
+    state_history_window: int = field(
+        default=5,
+        metadata={"help": "Number of historical steps to track for each replica."},
+    )
+    qps_window: int = field(
+        default=10,
+        metadata={"help": "Window size for QPS computation and trend analysis."},
+    )
+
+    # Enhanced reward calculation parameters
+    latency_threshold: float = field(
+        default=6.0,
+        metadata={"help": "Soft latency threshold for penalty activation (seconds) - increased to reduce penalty frequency."},
+    )
+    latency_penalty_scale: float = field(
+        default=0.5,
+        metadata={"help": "Scale factor for latency threshold penalty - significantly reduced to allow other rewards to matter."},
+    )
+    load_balance_penalty: float = field(
+        default=0.15,
+        metadata={"help": "Weight for replica load balance penalty based on queue variance - increased to enforce distribution."},
+    )
+
+    # Restructured reward system parameters
+    throughput_target: float = field(
+        default=0.05,  # Lower target to make current performance more rewarding
+        metadata={"help": "Target throughput for normalization in absolute score calculation (requests/second)."},
+    )
+    absolute_weight: float = field(
+        default=0.8,  # Increase absolute weight to amplify positive signals
+        metadata={"help": "Weight for absolute score component (w_abs) - primary reward signal."},
+    )
+    delta_weight: float = field(
+        default=0.2,  # Reduce delta weight since it's often zero
+        metadata={"help": "Weight for delta score component (w_delta) - improvement signal."},
+    )
+    alpha: float = field(
+        default=0.1,  # Drastically reduce latency penalty to allow positive rewards
+        metadata={"help": "Balance factor in absolute score (throughput vs latency weight)."},
+    )
+    beta: float = field(
+        default=0.3,
+        metadata={"help": "Weight for normalized throughput delta in delta score."},
+    )
+    gamma: float = field(
+        default=0.2,
+        metadata={"help": "Weight for normalized latency delta in delta score."},
+    )
+    kappa: float = field(
+        default=0.05,  # Drastically reduce logistic penalty weight
+        metadata={"help": "Weight for logistic latency penalty (smooth replacement for threshold penalty)."},
+    )
+    sigma: float = field(
+        default=2.0,  # Increase smoothness to make penalty more gradual
+        metadata={"help": "Scale parameter for logistic penalty smoothness."},
+    )
+    ema_alpha: float = field(
+        default=0.1,
+        metadata={"help": "Alpha parameter for exponential moving averages in reward calculation."},
+    )
+
+    # Enhanced Actor-Critic architecture parameters
+    enable_decoupled_ac: bool = field(
+        default=True,
+        metadata={"help": "Enable decoupled Actor-Critic architecture for better learning."},
+    )
+    feature_projection_dim: int = field(
+        default=256,
+        metadata={"help": "Dimension for feature projection layer (auto-sized if 0)."},
+    )
+
+    # Dynamic temperature control parameters
+    enable_dynamic_temperature: bool = field(
+        default=True,
+        metadata={"help": "Enable dynamic temperature scaling for exploration control."},
+    )
+    base_temperature: float = field(
+        default=1.5,
+        metadata={"help": "Base temperature for action selection - increased for more exploration."},
+    )
+    min_temperature: float = field(
+        default=0.8,
+        metadata={"help": "Minimum allowed temperature - increased to prevent over-exploitation."},
+    )
+    max_temperature: float = field(
+        default=3.0,
+        metadata={"help": "Maximum allowed temperature - increased for stronger exploration."},
+    )
+    qps_sensitivity: float = field(
+        default=0.1,
+        metadata={"help": "Sensitivity to QPS pressure for temperature adjustment."},
+    )
+    latency_sensitivity: float = field(
+        default=0.2,
+        metadata={"help": "Sensitivity to latency pressure for temperature adjustment."},
+    )
+
+    @staticmethod
+    def get_type():
+        return GlobalSchedulerType.PPO_MODULAR
+
 
 @dataclass
 class BaseExecutionTimePredictorConfig(BasePolyConfig):

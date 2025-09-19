@@ -10,3 +10,4 @@ class GlobalSchedulerType(BaseIntEnum):
     # 新增：可用字符串 "globalscheduleonline" 或整数 5
     GLOBALSCHEDULEONLINE = 5
     PPOONLINE = 6
+    PPO_MODULAR = 7
