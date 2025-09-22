@@ -7,6 +7,7 @@
 """
 
 import argparse
+import os
 import pickle
 import sys
 from pathlib import Path
@@ -42,14 +43,16 @@ from vidur.entities import Replica
 class DemoCollector:
     """示教数据收集器"""
 
-    def __init__(self, policy_type: str = "round_robin"):
+    def __init__(self, policy_type: str = "round_robin", policies: List[str] = None):
         """
         初始化收集器
 
         Args:
-            policy_type: 启发式策略类型 (round_robin, lor, random)
+            policy_type: 单一策略类型 (round_robin, lor, random)
+            policies: 混合策略列表，如果提供则进行混合收集
         """
         self.policy_type = policy_type
+        self.policies = policies or [policy_type]
         self.demo_data = []
 
     def collect_demonstrations(
@@ -75,6 +78,11 @@ class DemoCollector:
         import sys
         original_argv = sys.argv.copy()
 
+        # 规范化输出目录 - 避免时间戳目录分散
+        simulator_output_base = os.getenv("SIMULATOR_OUTPUT_BASE", "./data/pretraining/simulator_temp")
+        demo_output_dir = f"{simulator_output_base}/{self.policy_type}"
+        Path(demo_output_dir).mkdir(parents=True, exist_ok=True)
+
         config_args = [
             "collect_demo.py",  # 程序名
             "--global_scheduler_config_type", self.policy_type,
@@ -83,6 +91,7 @@ class DemoCollector:
             "--interval_generator_config_type", "poisson",
             "--poisson_request_interval_generator_config_qps", str(qps),
             "--metrics_config_subsamples", "200000",
+            "--metrics_config_output_dir", demo_output_dir,
         ]
 
         # 临时替换sys.argv并创建配置
@@ -100,11 +109,8 @@ class DemoCollector:
 
         def schedule_with_collection():
             # 获取状态（这里需要根据具体调度器实现调整）
-            if hasattr(simulator._scheduler, 'get_current_state'):
-                state = simulator._scheduler.get_current_state()
-            else:
-                # 对于非PPO调度器，我们需要手动构建状态
-                state = self._build_state_for_heuristic(simulator._scheduler)
+            # 对于非PPO调度器，直接构建状态（PPO调度器应该使用专门的收集逻辑）
+            state = self._build_state_for_heuristic(simulator._scheduler)
 
             # 执行原始调度
             result = original_schedule()
@@ -134,13 +140,16 @@ class DemoCollector:
             # 保存数据
             self._save_demo_data(output_path)
 
+            # 清理临时模拟器输出目录 (Vidur会自动添加时间戳后缀)
+            self._cleanup_simulator_temp(demo_output_dir)
+
         except Exception as e:
             print(f"❌ 收集失败: {e}")
             raise
 
     def _build_state_for_heuristic(self, scheduler) -> np.ndarray:
         """
-        为启发式调度器构建状态向量
+        为启发式调度器构建状态向量 (使用 StateBuilder 保持与PPO一致)
 
         Args:
             scheduler: 调度器实例
@@ -148,40 +157,30 @@ class DemoCollector:
         Returns:
             状态向量
         """
-        try:
-            # 基础状态特征
-            state_features = []
+        # Import StateBuilder - 初始化时创建，避免重复创建
+        if not hasattr(self, '_state_builder'):
+            from src.core.models.state_builder import StateBuilder
+            # Use same configuration as PPO training
+            self._state_builder = StateBuilder(
+                max_queue_requests=4,
+                history_window=5,
+                qps_window=10,
+                enable_enhanced_features=True
+            )
 
-            # 队列长度
-            queue_len = len(getattr(scheduler, '_request_queue', []))
-            state_features.append(queue_len)
+        # Use StateBuilder to build consistent state vector - 直接访问属性，缺失时自然报错
+        replicas = scheduler._replicas
+        current_time = scheduler._current_time
+        metric_store = scheduler._metric_store
 
-            # 副本状态
-            replica_ids = getattr(scheduler, '_replica_ids', list(range(4)))
-            for replica_id in replica_ids:
-                replica_scheduler = scheduler.get_replica_scheduler(replica_id)
+        state_vector = self._state_builder.build_global_state(
+            replicas,
+            scheduler.get_replica_scheduler,
+            current_time,
+            metric_store
+        )
 
-                # 分配的blocks数量
-                num_alloc = getattr(replica_scheduler, '_num_allocated_blocks', 0)
-                num_total = getattr(replica_scheduler._config, 'num_blocks', 100)
-                utilization = num_alloc / max(num_total, 1)
-
-                state_features.extend([
-                    utilization,
-                    num_alloc,
-                    len(getattr(replica_scheduler, '_running_requests', []))
-                ])
-
-            # 时间特征
-            current_time = getattr(scheduler, '_current_time', 0.0)
-            state_features.append(current_time % 100)  # 周期性时间特征
-
-            return np.array(state_features, dtype=np.float32)
-
-        except Exception as e:
-            print(f"⚠️ 状态构建失败，使用默认状态: {e}")
-            # 返回默认状态（4个副本的简单状态）
-            return np.zeros(20, dtype=np.float32)
+        return state_vector
 
     def _save_demo_data(self, output_path: str) -> None:
         """保存示教数据"""
@@ -211,6 +210,18 @@ class DemoCollector:
         print(f"💾 数据已保存: {output_path}")
         print(f"📊 动作分布: {action_counts}")
         print(f"🎯 状态维度: {demo_stats['state_dim']}")
+
+    def _cleanup_simulator_temp(self, base_output_dir: str) -> None:
+        """清理模拟器临时输出目录中的时间戳子目录"""
+        try:
+            import shutil
+            base_path = Path(base_output_dir)
+            if base_path.exists():
+                # 删除整个临时输出目录
+                shutil.rmtree(base_path)
+                print(f"🧹 已清理模拟器临时输出: {base_output_dir}")
+        except Exception as e:
+            print(f"⚠️ 清理模拟器临时输出失败: {e}")
 
 
 def main():

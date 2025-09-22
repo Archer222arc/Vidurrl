@@ -1,0 +1,75 @@
+{
+  "experiment_name": "PPO调度器优化 v1.0",
+  "date": "2025-09-18",
+  "description": "解决动作分布倾斜和奖励信号缺陷的系统性优化",
+  "base_config": "ppo_modular",
+  "modifications": {
+    "reward_system": {
+      "throughput_target": 0.05,
+      "alpha": 0.1,
+      "kappa": 0.05,
+      "sigma": 2.0,
+      "absolute_weight": 0.8,
+      "delta_weight": 0.2,
+      "latency_threshold": 6.0,
+      "latency_penalty_scale": 0.5,
+      "load_balance_penalty": 0.15
+    },
+    "exploration_control": {
+      "entropy_coef": 0.25,
+      "target_kl": 0.01,
+      "entropy_min": 0.5,
+      "kl_coef": 0.2
+    },
+    "temperature_pulse": {
+      "pulse_interval": 8,
+      "pulse_magnitude": 2.0,
+      "stagnation_threshold": 0.005,
+      "stagnation_memory": 5
+    },
+    "network_architecture": {
+      "enable_decoupled_ac": true,
+      "feature_projection_dim": 256
+    }
+  },
+  "command_line": {
+    "base_command": "python -m vidur.main --global_scheduler_config_type ppo_modular",
+    "key_parameters": [
+      "--p_p_o_global_scheduler_modular_config_entropy_coef 0.25",
+      "--p_p_o_global_scheduler_modular_config_throughput_target 0.05",
+      "--p_p_o_global_scheduler_modular_config_alpha 0.1",
+      "--p_p_o_global_scheduler_modular_config_kappa 0.05",
+      "--p_p_o_global_scheduler_modular_config_target_kl 0.01",
+      "--p_p_o_global_scheduler_modular_config_entropy_min 0.5",
+      "--p_p_o_global_scheduler_modular_config_kl_coef 0.2"
+    ]
+  },
+  "expected_improvements": {
+    "action_distribution": "从73-77%单副本 → 25%均匀分布",
+    "reward_signal": "从-0.094持续负值 → 正值区间",
+    "exploration": "温度脉冲从未触发 → 每8步激活",
+    "training_stability": "clipfrac从偏高 → <0.3"
+  },
+  "monitoring_metrics": [
+    "action_replica_0/1/2/3",
+    "absolute_score",
+    "total_reward",
+    "temp_is_pulsing",
+    "entropy",
+    "clipfrac",
+    "approx_kl"
+  ],
+  "success_criteria": {
+    "action_balance": "各副本动作占比 20-30% 范围内",
+    "positive_rewards": "absolute_score > 0, total_reward > 0",
+    "active_exploration": "entropy > 0.5, 定期温度脉冲",
+    "stable_training": "clipfrac < 0.3, approx_kl < 0.01"
+  },
+  "related_files": [
+    "src/rl_components/ppo_trainer.py",
+    "src/rl_components/actor_critic.py",
+    "src/rl_components/temperature_controller.py",
+    "vidur/config/config.py",
+    "vidur/scheduler/global_scheduler/ppo_scheduler_modular.py"
+  ]
+}

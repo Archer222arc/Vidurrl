@@ -1,0 +1,141 @@
+{
+  "model_transfer_config": {
+    "description": "确保standalone预训练模型与PPO热启动模型之间的兼容性",
+    "version": "1.0",
+    "compatibility_checks": {
+      "state_dim_match": true,
+      "action_dim_match": true,
+      "hidden_size_compatibility": true,
+      "layer_structure_validation": true
+    }
+  },
+  "pretrain_to_ppo_mapping": {
+    "shared_components": {
+      "feature_extractor": {
+        "source": "pretrain.backbone",
+        "target": "ppo.actor.backbone",
+        "transfer_strategy": "direct_copy",
+        "freeze_initial_epochs": 5
+      },
+      "strategy_embeddings": {
+        "source": "pretrain.strategy_embedding",
+        "target": "ppo.actor.strategy_embedding",
+        "transfer_strategy": "direct_copy",
+        "adaptive_fine_tune": true
+      },
+      "attention_weights": {
+        "source": "pretrain.attention_layers",
+        "target": "ppo.actor.attention_layers",
+        "transfer_strategy": "scaled_copy",
+        "scaling_factor": 0.8
+      }
+    },
+    "ppo_specific_components": {
+      "critic_network": {
+        "initialization": "kaiming_normal",
+        "bias_initialization": "zero",
+        "layer_scaling": "progressive"
+      },
+      "value_head": {
+        "initialization": "xavier_uniform",
+        "bias_initialization": "small_positive",
+        "output_scaling": 0.1
+      }
+    }
+  },
+  "training_schedule": {
+    "phase_1_warmup": {
+      "duration_steps": 1000,
+      "frozen_components": ["feature_extractor", "strategy_embeddings"],
+      "learning_rates": {
+        "actor": 1e-5,
+        "critic": 1e-4
+      },
+      "description": "渐进式解冻，先训练PPO特有组件"
+    },
+    "phase_2_joint_training": {
+      "duration_steps": 5000,
+      "frozen_components": [],
+      "learning_rates": {
+        "actor": 3e-4,
+        "critic": 5e-4
+      },
+      "description": "联合训练所有组件，较低学习率保护预训练知识"
+    },
+    "phase_3_full_optimization": {
+      "duration_steps": -1,
+      "frozen_components": [],
+      "learning_rates": {
+        "actor": 3e-4,
+        "critic": 3e-4
+      },
+      "description": "完全优化，标准PPO学习率"
+    }
+  },
+  "state_dimension_mismatch_solution": {
+    "problem_description": "预训练使用固定14维状态，PPO使用动态198维状态(4副本)",
+    "solution_strategy": "hierarchical_feature_fusion",
+    "architecture_design": {
+      "stage_1_core_extraction": {
+        "input": "198维PPO状态 (num_replicas * 47 + 10)",
+        "output": "14维核心特征 (与预训练兼容)",
+        "method": "注意力池化 + 可学习压缩",
+        "purpose": "提取与预训练状态等价的核心调度信息"
+      },
+      "stage_2_feature_fusion": {
+        "core_features": "14维 (继承预训练权重)",
+        "enhanced_features": "184维 (198-14, PPO特有的详细状态)",
+        "fusion_output": "320维 (Actor/Critic输入)",
+        "method": "加权拼接 + 特征投影"
+      },
+      "stage_3_knowledge_transfer": {
+        "pretrained_component": "基于14维核心特征的策略网络",
+        "target_component": "PPO Actor网络的核心部分",
+        "transfer_method": "直接复制权重到融合层的核心分支"
+      }
+    }
+  },
+  "architecture_validation": {
+    "required_dimensions": {
+      "pretrain_state_dim": 198,
+      "ppo_state_dim": 198,
+      "dimension_compatibility": "PERFECT_MATCH",
+      "action_dim": 4,
+      "pretrain_hidden_size": 320,
+      "ppo_actor_hidden_size": 320,
+      "ppo_critic_hidden_size": 384
+    },
+    "layer_compatibility": {
+      "gru_layers": {
+        "pretrain": 3,
+        "ppo_actor": 3,
+        "ppo_critic": 3,
+        "compatibility_status": "MATCHED - Direct weight transfer possible"
+      },
+      "attention_heads": {
+        "pretrain": 4,
+        "ppo": 4,
+        "head_dimension": 80
+      },
+      "dimension_adaptation": {
+        "core_extractor_layers": 2,
+        "fusion_layers": 3,
+        "projection_layers": 1
+      }
+    }
+  },
+  "performance_monitoring": {
+    "compatibility_metrics": [
+      "feature_similarity_before_after_transfer",
+      "gradient_norm_stability",
+      "policy_entropy_preservation",
+      "value_function_initialization_quality"
+    ],
+    "alert_thresholds": {
+      "feature_similarity_min": 0.7,
+      "gradient_explosion_max": 10.0,
+      "entropy_drop_max": 0.5,
+      "value_variance_max": 100.0
+    }
+  }
+}

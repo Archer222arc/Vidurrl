@@ -1,0 +1,178 @@
+{
+  "training": {
+    "num_replicas": 4,
+    "qps": 2.5,
+    "ppo_requests": 20000,
+    "bc_epochs": 30,
+    "demo_steps_per_policy": 700,
+    "demo_policies": "round_robin lor random"
+  },
+  "model_dimensions": {
+    "state_dim": 198,
+    "action_dim": 4,
+    "comment": "Must match standalone_pretrain.json for model compatibility"
+  },
+  "state_dimension_compatibility": {
+    "pretrain_state_dim": 198,
+    "ppo_state_dim": 198,
+    "status": "COMPATIBLE - No adaptation needed",
+    "comment": "Both stages now use identical 198-dimensional state vectors",
+    "state_formula": "num_replicas * 47 + 10 = 4 * 47 + 10 = 198",
+    "direct_transfer": true
+  },
+  "network_compatibility": {
+    "pretrain_hidden_size": 320,
+    "pretrain_gru_layers": 3,
+    "pretrain_num_layers": 3,
+    "inherit_strategy_embeddings": true,
+    "inherit_attention_weights": true,
+    "freeze_feature_extractor": false,
+    "adaptive_layer_init": true,
+    "enable_gradual_unfreezing": true,
+    "unfreezing_schedule": [500, 1000, 2000],
+    "compatibility_status": "MATCHED - Actor inherits pretrain architecture"
+  },
+  "actor_critic_architecture": {
+    "shared_backbone": false,
+    "actor": {
+      "hidden_size": 320,
+      "num_layers": 3,
+      "use_gru": true,
+      "gru_layers": 3,
+      "output_activation": "softmax",
+      "temperature_scaling": true,
+      "exploration_bonus_layer": true,
+      "comment": "Matches pretraining architecture for direct weight transfer"
+    },
+    "critic": {
+      "hidden_size": 384,
+      "num_layers": 4,
+      "use_gru": true,
+      "gru_layers": 3,
+      "value_head_layers": 2,
+      "value_normalization": true,
+      "comment": "Larger capacity for value function learning"
+    }
+  },
+  "ppo_config": {
+    "lr": 0.0003,
+    "gamma": 0.95,
+    "gae_lambda": 0.9,
+    "clip_ratio": 0.15,
+    "epochs": 8,
+    "rollout_len": 128,
+    "minibatch_size": 64,
+    "entropy_coef": 0.02,
+    "entropy_warmup_coef": 0.01,
+    "stabilization_steps": 100,
+    "max_grad_norm": 1.0
+  },
+  "reward_config": {
+    "latency_weight": 1.7,
+    "balance_penalty_weight": 0.2,
+    "latency_threshold": 6.0,
+    "latency_penalty_scale": 0.85,
+    "load_balance_penalty": 1.0,
+    "throughput_target": 1.85,
+    "absolute_weight": 0.8,
+    "delta_weight": 0.2,
+    "alpha": 0.1,
+    "kappa": 0.05,
+    "sigma": 2.0,
+    "ema_alpha": 0.1,
+    "reward_scaling": {
+      "type": "linear",
+      "scale_factor": 1.5,
+      "clip_range": [-4.0, 4.0],
+      "comment": "Linear scaling instead of tanh to prevent reward saturation"
+    }
+  },
+  "kl_regularization": {
+    "target_kl": 0.02,
+    "entropy_min": 0.3,
+    "kl_coef": 0.15,
+    "kl_ref_coef_initial": 0.3,
+    "kl_ref_coef_final": 0.0,
+    "kl_ref_decay_steps": 5000,
+    "warmup_steps": 1000
+  },
+  "statistics_stabilization": {
+    "enable_statistics_stabilization": true,
+    "stabilization_steps": 200,
+    "stabilization_policy": "random",
+    "collect_baseline_stats": true,
+    "freeze_normalizers_during_stabilization": false,
+    "enable_stabilization_logging": true,
+    "stabilization_action_distribution": "uniform",
+    "comment": "Separate from training warmup - this stabilizes state/reward normalizers before PPO starts"
+  },
+  "temperature_control": {
+    "enable_dynamic_temperature": true,
+    "base_temperature": 1.5,
+    "min_temperature": 0.8,
+    "max_temperature": 3.0,
+    "qps_sensitivity": 0.05,
+    "latency_sensitivity": 0.1,
+    "adaptive_schedule": true
+  },
+  "enhanced_features": {
+    "enable_enhanced_features": true,
+    "state_history_window": 5,
+    "qps_window": 10,
+    "temporal_attention": {
+      "enable": true,
+      "num_heads": 4,
+      "history_encoding": "lstm"
+    },
+    "feature_projection": {
+      "enable": true,
+      "projection_dim": 256,
+      "use_layer_norm": true
+    }
+  },
+  "advanced_optimization": {
+    "learning_rate_schedule": {
+      "type": "cosine_annealing_with_warmup",
+      "warmup_steps": 1000,
+      "min_lr_ratio": 0.1,
+      "restart_period": 5000
+    },
+    "adaptive_batch_size": {
+      "enable": true,
+      "min_batch_size": 32,
+      "max_batch_size": 128,
+      "adaptation_rate": 0.1
+    },
+    "gradient_optimization": {
+      "use_gradient_checkpointing": true,
+      "accumulation_steps": 2,
+      "clip_by_global_norm": true
+    }
+  },
+  "checkpointing": {
+    "enable_checkpoints": true,
+    "checkpoint_dir": "./outputs/checkpoints",
+    "checkpoint_interval": 128,
+    "max_checkpoints": 5,
+    "save_optimizer_state": true,
+    "incremental_checkpoints": true
+  },
+  "monitoring": {
+    "tensorboard_port": 6006,
+    "metrics_export_format": "csv",
+    "metrics_export_interval": 50,
+    "metrics_subsamples": 200000,
+    "advanced_metrics": {
+      "track_policy_entropy": true,
+      "track_value_function_variance": true,
+      "track_action_distribution": true,
+      "track_kl_divergence": true,
+      "track_advantage_statistics": true
+    },
+    "visualization": {
+      "plot_attention_heatmaps": true,
+      "plot_policy_evolution": true,
+      "plot_reward_decomposition": true
+    }
+  }
+}

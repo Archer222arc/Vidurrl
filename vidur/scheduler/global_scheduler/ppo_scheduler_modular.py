@@ -21,21 +21,29 @@ from vidur.scheduler.global_scheduler.random_global_scheduler_with_state import 
     debug_dump_replica_state,
 )
 
-# Import modular components from src/
-from src.rl_components import (
-    ActorCritic,
-    RunningNormalizer,
-    PPOTrainer,
-    RewardCalculator,
-    RolloutBuffer,
-    StateBuilder,
-    TensorBoardMonitor,
-    PPOTrainingDetector,
-    CheckpointManager,
-    InferenceMode,
-    MetricsExporter,
-    TemperatureController,
-)
+# Import modular components from src/core (新统一结构)
+from src.core.models import ActorCritic, StateBuilder
+from src.core.algorithms import PPOTrainer, RolloutBuffer
+from src.core.algorithms.rewards import RewardCalculator
+from src.core.utils import RunningNormalizer, TemperatureController
+from src.core.utils.monitoring import TensorBoardMonitor, MetricsExporter
+from src.core.utils.infrastructure.checkpoints import CheckpointManager
+
+# 其他组件导入 (如果存在)
+try:
+    from src.core.utils.monitoring.tensorboard_monitor import PPOTrainingDetector
+    from src.core.algorithms import InferenceMode
+except ImportError:
+    # 这些组件可能还未迁移，使用兼容性导入
+    try:
+        from src.core.utils.monitoring.tensorboard_monitor import PPOTrainingDetector
+    except ImportError:
+        PPOTrainingDetector = None
+
+    try:
+        from src.core.algorithms import InferenceMode
+    except ImportError:
+        InferenceMode = None
 
 logger = init_logger(__name__)
 
@@ -227,6 +235,17 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         # Training state
         self._step: int = 0
 
+        # Stabilization period for warm start (prevents early parameter updates)
+        self._stabilization_steps: int = getattr(gcfg, 'stabilization_steps', 1000)
+
+        # Statistics stabilization configuration (separate from training warmup)
+        self._enable_statistics_stabilization = getattr(gcfg, 'enable_statistics_stabilization', True)
+        self._statistics_stabilization_steps = getattr(gcfg, 'statistics_stabilization_steps', 100)
+        self._stabilization_policy = getattr(gcfg, 'stabilization_policy', 'random')
+        self._collect_baseline_stats = getattr(gcfg, 'collect_baseline_stats', True)
+        self._enable_stabilization_logging = getattr(gcfg, 'enable_stabilization_logging', True)
+        self._statistics_stabilization_completed = False
+
         # Normalizer reinitialization flag for inference mode
         self._needs_norm_reinit: bool = False
 
@@ -271,6 +290,10 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         self._load_checkpoint = str(gcfg.load_checkpoint)
         self._inference_only = bool(gcfg.inference_only)
 
+        # Warm start configuration
+        self._enable_warm_start = bool(gcfg.enable_warm_start)
+        self._pretrained_actor_path = str(gcfg.pretrained_actor_path)
+
         self._checkpoint_manager = CheckpointManager(
             checkpoint_dir=self._checkpoint_dir,
             save_interval=self._checkpoint_interval,
@@ -283,6 +306,9 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             self._load_from_checkpoint()
         elif self._inference_only:
             raise ValueError("inference_only=True requires load_checkpoint to be specified")
+        elif self._enable_warm_start and self._pretrained_actor_path:
+            # Apply warm start if no checkpoint is loaded
+            self._apply_warm_start()
 
         # Set correct training/inference mode for Actor-Critic
         if self._inference_only:
@@ -340,7 +366,7 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
                 state_builder_config = metadata.get("state_builder_config")
                 if state_builder_config:
                     logger.info("[PPO:checkpoint] Applying StateBuilder config from checkpoint")
-                    from src.rl_components.state_builder import StateBuilder
+                    from src.core.models.state_builder import StateBuilder
                     self._state_builder = StateBuilder(
                         max_queue_requests=state_builder_config["max_queue_requests"],
                         history_window=state_builder_config["history_window"],
@@ -462,6 +488,54 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             else:
                 logger.warning("[PPO:checkpoint] Continuing with fresh training state")
 
+    def _apply_warm_start(self) -> None:
+        """Apply warm start from pretrained actor model."""
+        try:
+            logger.info("[PPO:warmstart] Loading pretrained actor from %s", self._pretrained_actor_path)
+
+            # Load pretrained actor weights
+            import torch
+            pretrained_data = torch.load(self._pretrained_actor_path, map_location=self._device)
+
+            # Load the actor weights into current model
+            if isinstance(pretrained_data, dict) and 'state_dict' in pretrained_data:
+                pretrained_state_dict = pretrained_data['state_dict']
+            else:
+                pretrained_state_dict = pretrained_data
+
+            # Load weights to current actor-critic
+            missing_keys, unexpected_keys = self._ac.load_state_dict(pretrained_state_dict, strict=False)
+
+            if missing_keys:
+                logger.warning("[PPO:warmstart] Missing keys in pretrained model: %s", missing_keys)
+            if unexpected_keys:
+                logger.warning("[PPO:warmstart] Unexpected keys in pretrained model: %s", unexpected_keys)
+
+            # Create reference policy for KL regularization
+            # Clone current model as reference policy
+            reference_policy = ActorCritic(
+                state_dim=self._ac.state_dim,
+                action_dim=self._ac.action_dim,
+                hidden_size=self._ac.hidden_size,
+                layer_N=self._ac.layer_N,
+                gru_layers=self._ac.gru_layers,
+                enable_decoupled=getattr(self._ac, 'enable_decoupled', False),
+                feature_projection_dim=getattr(self._ac, 'feature_projection_dim', None),
+            ).to(self._device)
+
+            # Copy current weights to reference policy
+            reference_policy.load_state_dict(self._ac.state_dict())
+
+            # Set reference policy for KL regularization
+            self._ppo.set_reference_policy(reference_policy)
+
+            logger.info("[PPO:warmstart] Warm start applied successfully")
+            logger.info("[PPO:warmstart] Reference policy set for KL regularization")
+
+        except Exception as e:
+            logger.error("[PPO:warmstart] Failed to apply warm start: %s", e)
+            logger.warning("[PPO:warmstart] Continuing with random initialization")
+
     def schedule(self) -> List[Tuple[int, Request]]:
         """
         Schedule requests using PPO-based decision making.
@@ -472,6 +546,12 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         if not self._request_queue:
             return []
 
+        # Statistics stabilization phase (separate from training warmup)
+        if (self._enable_statistics_stabilization and
+            not self._statistics_stabilization_completed and
+            self._step < self._statistics_stabilization_steps):
+            return self._statistics_stabilization_step()
+
         if self._debug_dump:
             for rid in self._replica_ids:
                 rs = self.get_replica_scheduler(rid)
@@ -480,7 +560,7 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         # Handle normalizer reinitialization for inference mode after StateBuilder rebuild
         if self._needs_norm_reinit:
             logger.info("[PPO:schedule] Reinitializing normalizer to match rebuilt StateBuilder")
-            from src.rl_components.normalizers import RunningNormalizer
+            from src.core.utils.normalizers import RunningNormalizer
             self._norm = RunningNormalizer()
             self._needs_norm_reinit = False
 
@@ -652,7 +732,7 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             self._log_step_info(a_i, reward_info, r)
 
         if (self._step % 10) == 0:
-            self._log_progress()
+            self._log_progress(current_reward=r)
 
         # 7) Update TensorBoard and monitoring (only in training mode)
         if not self._inference_only:
@@ -721,6 +801,15 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
 
     def _perform_ppo_update(self, s: torch.Tensor, mask: torch.Tensor) -> None:
         """Perform PPO update when rollout buffer is full."""
+
+        # Check if we're in stabilization period (only for warm start)
+        if (self._enable_warm_start and self._pretrained_actor_path and
+            self._step < self._stabilization_steps):
+            logger.info("[PPO:stabilization] Skipping parameter update during stabilization period (step %d/%d)",
+                       self._step, self._stabilization_steps)
+            # Reset buffer but don't update parameters
+            self._buf.reset(state_dim=s.shape[-1])
+            return
         with torch.no_grad():
             # Bootstrap value using current state - use act_value for proper decoupled handling
             _, _, last_v, _ = self._ac.act_value(s, self._hxs, mask)
@@ -964,16 +1053,106 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             act_hist,
         )
 
-    def _log_progress(self) -> None:
+    def _log_progress(self, current_reward: float = None) -> None:
         """Log rollout progress."""
         try:
-            last_r = float(self._buf.r[-1]) if len(self._buf.r) > 0 else float("nan")
+            if current_reward is not None:
+                # Use the current step's reward if provided
+                display_reward = float(current_reward)
+            else:
+                # Fallback to buffer's last reward
+                display_reward = float(self._buf.r[-1]) if len(self._buf.r) > 0 else float("nan")
+
             logger.info(
-                "[PPO:rollout] step=%d buf_ptr=%d/%d last_r=%.6f",
-                self._step, self._buf.ptr, self._rollout_len, last_r
+                "[PPO:rollout] step=%d buf_ptr=%d/%d current_r=%.6f",
+                self._step, self._buf.ptr, self._rollout_len, display_reward
             )
         except Exception:
             pass
+
+    def _statistics_stabilization_step(self) -> List[Tuple[int, Request]]:
+        """
+        Execute one step of statistics stabilization phase.
+
+        This phase uses random actions to collect stable statistics for
+        state normalizers and reward baselines before PPO training begins.
+
+        Returns:
+            List of (replica_id, request) tuples for scheduling
+        """
+        if self._enable_stabilization_logging and self._step % 20 == 0:
+            logger.info(
+                "[STATS_STABILIZATION] step=%d/%d - collecting baseline statistics",
+                self._step, self._statistics_stabilization_steps
+            )
+
+        # 1) Build and normalize state (collect statistics)
+        s_np = self._state_builder.build_global_state(
+            self._replicas,
+            self.get_replica_scheduler,
+            self._current_time,
+            self._metric_store,
+        )
+
+        # Update normalizer with new state observations
+        self._norm.update(s_np)
+        s_norm = self._norm.normalize(s_np)
+
+        # 2) Calculate reward to update reward statistics
+        raw_throughput = float(self._metric_store.get_throughput(self._current_time))
+        raw_latency = float(self._metric_store.get_average_latency())
+
+        if self._reward_calc.is_valid_update(raw_throughput, raw_latency):
+            r, reward_info = self._reward_calc.calculate_reward(
+                self._metric_store,
+                self._current_time,
+                self._replica_ids,
+                self.get_replica_scheduler,
+            )
+
+            # Log reward metrics during stabilization
+            if self._tb_monitor.is_active():
+                self._tb_monitor.log_reward_metrics(
+                    reward_info, r, step=self._step
+                )
+
+        # 3) Use random action for stabilization (not PPO policy)
+        if self._stabilization_policy == "random":
+            # Uniform random selection
+            a_i = np.random.randint(0, len(self._replica_ids))
+        else:
+            # Could implement other stabilization policies here
+            a_i = np.random.randint(0, len(self._replica_ids))
+
+        rid = self._replica_ids[a_i]
+
+        # 4) Schedule the request to selected replica
+        selected_request = self._request_queue.pop(0)
+        result = [(rid, selected_request)]
+
+        # 5) Increment step and check for completion
+        self._step += 1
+
+        if self._step >= self._statistics_stabilization_steps:
+            self._statistics_stabilization_completed = True
+            if self._enable_stabilization_logging:
+                logger.info(
+                    "[STATS_STABILIZATION] Completed! Normalizer statistics collected over %d steps",
+                    self._statistics_stabilization_steps
+                )
+                logger.info("[STATS_STABILIZATION] Transitioning to PPO training mode")
+
+                # Log final normalizer statistics
+                if hasattr(self._norm, 'mean') and hasattr(self._norm, 'var'):
+                    mean_magnitude = float(np.linalg.norm(self._norm.mean))
+                    std_magnitude = float(np.sqrt(np.mean(self._norm.var)))
+                    logger.info(
+                        "[STATS_STABILIZATION] Final normalizer stats - "
+                        "mean_magnitude=%.4f, std_magnitude=%.4f",
+                        mean_magnitude, std_magnitude
+                    )
+
+        return result
 
 
 # Note: Scheduler registration is handled in global_scheduler_registry.py

@@ -594,8 +594,8 @@ class PPOGlobalSchedulerOnlineConfig(DQNGlobalSchedulerOnlineConfig):
     reward_mode: RewardMode = RewardMode.hybrid   # 混合模式：绝对价值 + 平滑差分，避免静止状态零奖励
     gae_lambda: float = 0.95
     clip_ratio: float = 0.15  # Reduced to prevent aggressive updates
-    entropy_coef: float = 0.25  # Further increased to combat action collapse
-    value_coef: float = 0.5
+    entropy_coef: float = 0.02  # Increased from 0.005 to 0.02 for better exploration as per improvement plan
+    value_coef: float = 0.5  # Keep at 0.5 initially, may reduce to 0.3 if value function dominates
     epochs: int = 8  # Increased for better convergence
     rollout_len: int = 32
     minibatch_size: int = 64
@@ -626,6 +626,10 @@ class PPOGlobalSchedulerOnlineConfig(DQNGlobalSchedulerOnlineConfig):
     pretrained_actor_path: str = field(
         default="",
         metadata={"help": "Path to pretrained actor model for warm start."},
+    )
+    stabilization_steps: int = field(
+        default=1000,
+        metadata={"help": "Number of initial steps during which parameters are not updated (stabilization period)."},
     )
     kl_ref_coef_initial: float = field(
         default=0.5,
@@ -840,6 +844,36 @@ class PPOGlobalSchedulerModularConfig(PPOGlobalSchedulerOnlineConfig):
     latency_sensitivity: float = field(
         default=0.2,
         metadata={"help": "Sensitivity to latency pressure for temperature adjustment."},
+    )
+
+    # Statistics stabilization configuration
+    enable_statistics_stabilization: bool = field(
+        default=True,
+        metadata={"help": "Enable statistics stabilization phase before PPO training starts."},
+    )
+    statistics_stabilization_steps: int = field(
+        default=100,
+        metadata={"help": "Number of random steps to collect statistics before PPO training."},
+    )
+    stabilization_policy: str = field(
+        default="random",
+        metadata={"help": "Policy to use during stabilization phase (random, uniform)."},
+    )
+    collect_baseline_stats: bool = field(
+        default=True,
+        metadata={"help": "Collect baseline statistics during stabilization phase."},
+    )
+    freeze_normalizers_during_stabilization: bool = field(
+        default=False,
+        metadata={"help": "Freeze normalizers during stabilization phase."},
+    )
+    enable_stabilization_logging: bool = field(
+        default=True,
+        metadata={"help": "Enable detailed logging during statistics stabilization phase."},
+    )
+    stabilization_action_distribution: str = field(
+        default="uniform",
+        metadata={"help": "Action distribution during stabilization (uniform, weighted)."},
     )
 
     @staticmethod

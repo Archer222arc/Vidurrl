@@ -1,0 +1,20 @@
+{
+  "training_mode": "enhanced",
+  "state_dim": 198,
+  "action_dim": 4,
+  "hidden_size": 256,
+  "layer_N": 3,
+  "gru_layers": 3,
+  "learning_rate": 1e-4,
+  "weight_decay": 1e-5,
+  "batch_size": 512,
+  "epochs": 100,
+  "validation_split": 0.2,
+  "early_stopping_patience": 20,
+  "save_interval": 10,
+  "device": "cpu",
+  "output_dir": "./outputs/unified_pretrain",
+  "augment_data": true,
+  "noise_std": 0.01,
+  "use_tensorboard": true
+}

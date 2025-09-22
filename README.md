@@ -1,4 +1,128 @@
 
+# 🚀 Vidur-Arc2: 智能调度器项目 - 负载均衡优化版
+
+## 📋 最新更新 (arc2分支)
+
+### 🎯 负载均衡优化训练 (推荐)
+
+解决PPO训练初期负载极度不均衡问题的优化版本：
+
+```bash
+# 启动优化的热身训练 (推荐)
+bash scripts/train_ppo_warmstart_optimized.sh
+```
+
+**核心优化改进**：
+- **🔥 压制warmup随机性**: `entropy_warmup_coef=0.0`, `min_temperature=0.5`
+- **🔗 强化KL约束**: `initial=0.6`, `final=0.1`, `decay=3000步`
+- **⚖️ 加强负载惩罚**: `balance_penalty=0.3`, `load_balance=0.3`
+- **📊 混合策略示教**: Round Robin + LOR + Random + 极端不均衡场景
+- **🔄 智能Resume**: 交互式checkpoint恢复，自动跳过warmstart
+
+### 🔄 Resume训练功能
+
+支持从checkpoint智能恢复训练：
+
+```bash
+# 运行训练脚本时会自动检测checkpoint
+bash scripts/train_ppo_warmstart_optimized.sh
+
+# 如果发现checkpoint，会提示选择：
+🔄 发现existing checkpoint: ./outputs/checkpoints/latest.pt
+🤔 是否从checkpoint恢复训练? (这将跳过warmstart阶段)
+   y/Y) 从checkpoint恢复  ← 推荐，节省时间
+   n/N) 重新开始完整训练
+   q/Q) 退出脚本
+```
+
+### 📈 调度器性能对比
+
+快速测试不同调度器的性能对比：
+
+```bash
+# 运行调度器对比测试
+bash scripts/scheduler_comparison.sh
+
+# 查看实时训练监控
+tensorboard --logdir=./outputs/warmstart_training_optimized/run_*/tensorboard --port=6006
+```
+
+### 🏗️ 项目架构改进
+
+**模块化设计** (遵循CLAUDE.md规范)：
+```
+scripts/                           # 简洁的脚本文件 (<50行)
+├── train_ppo_warmstart_optimized.sh  # 优化训练主脚本
+├── scheduler_comparison.sh           # 调度器对比测试
+└── collect_demo.py                   # 示教数据收集
+
+src/                               # 核心逻辑模块
+├── demo_collection/               # 示教数据收集模块
+│   ├── mixed_collector.py         # 混合策略收集器
+│   └── __init__.py
+└── rl_components/                 # RL训练组件
+    ├── ppo_trainer.py             # PPO训练器
+    ├── checkpoint_manager.py      # Checkpoint管理
+    └── ...
+
+vidur/scheduler/global_scheduler/  # 调度器实现
+├── ppo_scheduler_modular.py       # 模块化PPO调度器
+└── ...
+```
+
+### 📊 训练流程详解
+
+**阶段1: 示教数据收集**
+```bash
+# 混合策略数据收集 (自动执行)
+python -m src.demo_collection.mixed_collector \
+  --policies round_robin lor random \
+  --steps_per_policy 700 \
+  --include_imbalanced  # 包含极端不均衡场景
+```
+
+**阶段2: 行为克隆预训练**
+```bash
+# BC预训练 (自动执行)
+python scripts/pretrain_actor.py \
+  --demo demo_data.pkl \
+  --epochs 30 \
+  --batch_size 256
+```
+
+**阶段3: PPO强化学习**
+```bash
+# PPO训练 (自动执行)
+python -m vidur.main \
+  --global_scheduler_config_type ppo_modular \
+  --p_p_o_global_scheduler_modular_config_enable_warm_start \
+  --p_p_o_global_scheduler_modular_config_pretrained_actor_path pretrained_actor.pt
+```
+
+### ⚙️ 关键参数说明
+
+**负载均衡优化参数**：
+- `entropy_warmup_coef=0.0`: 消除warmup期间的随机性
+- `kl_ref_coef_initial=0.6`: 强KL约束，贴近示教策略
+- `kl_ref_decay_steps=3000`: 延长KL衰减期
+- `balance_penalty_weight=0.3`: 加强负载均衡惩罚
+- `alpha=0.2`: 降低throughput权重，避免压制均衡惩罚
+
+**监控指标**：
+- **TensorBoard**: `http://localhost:6006`
+- **CSV导出**: `./outputs/warmstart_training_optimized/run_*/metrics/`
+- **Checkpoint**: `./outputs/checkpoints/latest.pt`
+
+### 📚 详细技术文档
+
+- **[负载均衡优化技术文档](docs/load_balance_optimization.md)** - 详细的优化策略和技术实现
+- **[项目开发规范](/.claude/CLAUDE.md)** - 代码规范和模块化标准
+- **[调度器实现文档](vidur/scheduler/global_scheduler/)** - PPO调度器核心实现
+
+---
+
+## 🛠️ 传统训练方式 (参考)
+
 python -m vidur.main `
   --cluster_config_num_replicas 4 `
   --global_scheduler_config_type ppoonline `

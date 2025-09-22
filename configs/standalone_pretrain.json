@@ -1,0 +1,80 @@
+{
+  "state_dim": 198,
+  "action_dim": 4,
+  "learning_rate": 1e-4,
+  "weight_decay": 1e-4,
+  "batch_size": 512,
+  "epochs": 100,
+  "validation_split": 0.2,
+  "early_stopping_patience": 20,
+  "save_interval": 10,
+  "device": "cpu",
+  "output_dir": "./outputs/standalone_pretrain",
+  "network_architecture": {
+    "type": "enhanced_gru",
+    "hidden_size": 320,
+    "num_gru_layers": 3,
+    "dropout_rate": 0.1,
+    "use_layer_norm": true,
+    "use_residual": true,
+    "activation": "gelu"
+  },
+  "advanced_features": {
+    "strategy_embedding": {
+      "enable": true,
+      "embedding_dim": 128,
+      "num_strategies": 3
+    },
+    "attention_mechanism": {
+      "enable": true,
+      "num_heads": 4,
+      "attention_dropout": 0.1
+    },
+    "feature_fusion": {
+      "enable": true,
+      "fusion_type": "attention_weighted"
+    }
+  },
+  "regularization": {
+    "gradient_clip_norm": 1.0,
+    "label_smoothing": 0.1,
+    "mixup_alpha": 0.2
+  },
+  "optimization": {
+    "optimizer": "adamw",
+    "lr_scheduler": "cosine_annealing_with_restarts",
+    "warmup_steps": 1000,
+    "min_lr_ratio": 0.01,
+    "t_0": 10,
+    "t_mult": 2
+  },
+  "demo_collection": {
+    "strategies": ["round_robin", "lor", "random"],
+    "steps_per_strategy": 2000,
+    "num_replicas": 4,
+    "qps": 3.0,
+    "include_variants": true
+  },
+  "data_augmentation": {
+    "enabled": true,
+    "noise_std": 0.01,
+    "cutmix_probability": 0.1,
+    "temporal_jitter": 0.05
+  },
+  "monitoring": {
+    "track_attention_weights": true,
+    "track_gradient_norms": true,
+    "track_feature_distributions": true,
+    "export_embeddings": true
+  },
+  "statistics_stabilization": {
+    "enable_statistics_stabilization": true,
+    "stabilization_steps": 100,
+    "stabilization_policy": "random",
+    "collect_baseline_stats": true,
+    "freeze_normalizers_during_stabilization": false,
+    "enable_stabilization_logging": true,
+    "stabilization_action_distribution": "uniform",
+    "comment": "Separate from training warmup - this stabilizes state/reward normalizers before PPO starts"
+  }
+}

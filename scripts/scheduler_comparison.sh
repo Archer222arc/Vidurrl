@@ -15,7 +15,7 @@ export PYTHONPATH="${REPO_ROOT}"
 # 配置参数
 COMPARISON_ID=$(date +%Y%m%d_%H%M%S)
 NUM_REQUESTS=500
-QPS=3
+QPS=2
 NUM_REPLICAS=4
 OUTPUT_DIR="./outputs/runs/scheduler_comparison/run_${COMPARISON_ID}"
 RESULTS_DIR="${OUTPUT_DIR}/results"
@@ -44,6 +44,7 @@ BASE_PARAMS="
 
 # =============================================================================
 # 测试1: PPO调度器 (使用checkpoint)
+# 注意: 即使在inference模式，也需要统计量稳定化来确保state normalizer的有效性
 # =============================================================================
 echo "📊 [1/4] 测试 PPO 调度器..."
 
@@ -54,6 +55,9 @@ python -m vidur.main \
   --p_p_o_global_scheduler_modular_config_max_queue_requests_per_replica 8 \
   --p_p_o_global_scheduler_modular_config_inference_only \
   --p_p_o_global_scheduler_modular_config_load_checkpoint "${CHECKPOINT_PATH}" \
+  --p_p_o_global_scheduler_modular_config_enable_statistics_stabilization \
+  --p_p_o_global_scheduler_modular_config_statistics_stabilization_steps 100 \
+  --p_p_o_global_scheduler_modular_config_enable_stabilization_logging \
   --no-p_p_o_global_scheduler_modular_config_enable_tensorboard \
   --no-p_p_o_global_scheduler_modular_config_enable_checkpoints \
   2>&1 | tee "${RESULTS_DIR}/ppo_output.log"
