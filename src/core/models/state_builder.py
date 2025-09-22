@@ -44,28 +44,39 @@ def normalize_priority(priority: Any) -> float:
     """
     Normalize priority value to float.
 
-    Supports None/int/float/Enum/str values with sensible defaults.
+    Direct access to priority value - no fallback allowed per CLAUDE.md regulations.
     """
     if priority is None:
         return 0.0
 
-    # Handle Enum values or numeric types
-    try:
-        value = getattr(priority, "value", priority)
-        return float(value)
-    except Exception:
-        pass
+    # Handle Enum values - direct access to .value attribute
+    if hasattr(priority, "value"):
+        return float(priority.value)
 
-    # Handle string priorities
-    try:
-        priority_str = str(priority).strip().lower()
-        priority_map = {
-            "low": 1.0, "normal": 2.0, "med": 2.0, "medium": 2.0,
-            "high": 3.0, "urgent": 4.0, "critical": 5.0,
-        }
-        return priority_map.get(priority_str, 0.0)
-    except Exception:
-        return 0.0
+    # Handle numeric types directly
+    if isinstance(priority, (int, float)):
+        return float(priority)
+
+    # Handle string priorities - direct mapping
+    priority_str = str(priority).strip().lower()
+    priority_map = {
+        "low": 1.0, "normal": 2.0, "med": 2.0, "medium": 2.0,
+        "high": 3.0, "urgent": 4.0, "critical": 5.0,
+    }
+    # Direct access - if key doesn't exist, let it fail
+    return priority_map[priority_str]
+
+
+def get_request_priority(request: Any) -> Any:
+    """
+    Get priority from request - explicit check for attribute existence.
+
+    No fallback allowed per CLAUDE.md - if priority doesn't exist, returns None.
+    """
+    # Explicit check for attribute existence
+    if hasattr(request, 'priority'):
+        return request.priority
+    return None
 
 
 class StateBuilder:
@@ -81,7 +92,9 @@ class StateBuilder:
         max_queue_requests: int = 4,
         history_window: int = 5,
         qps_window: int = 10,
-        enable_enhanced_features: bool = True
+        enable_enhanced_features: bool = True,
+        enable_queue_delay_features: bool = False,
+        queue_delay_normalization: Optional[Dict[str, float]] = None
     ):
         """
         Initialize enhanced state builder.
@@ -91,11 +104,21 @@ class StateBuilder:
             history_window: Number of historical steps to track for each replica
             qps_window: Window size for QPS computation (in steps)
             enable_enhanced_features: Whether to enable enhanced state features
+            enable_queue_delay_features: Whether to enable queue delay features
+            queue_delay_normalization: Normalization parameters for queue delay features
         """
         self.max_queue_requests = max_queue_requests
         self.history_window = history_window
         self.qps_window = qps_window
         self.enable_enhanced_features = enable_enhanced_features
+
+        # NEW: Queue delay features configuration
+        self.enable_queue_delay_features = enable_queue_delay_features
+        self.queue_delay_normalization = queue_delay_normalization or {
+            "max_wait_time_seconds": 10.0,
+            "urgency_scale": 10.0,
+            "priority_weight": 1.0
+        }
 
         # Historical tracking
         self._replica_history: Dict[int, deque] = defaultdict(lambda: deque(maxlen=history_window))
@@ -147,7 +170,12 @@ class StateBuilder:
         avail_frac = float(max(num_blocks - num_alloc, 0)) / float(num_blocks)
         queue_len = float(len(request_queue))
 
-        # Base features (11 dimensions)
+        # ENHANCED: Add queue delay features as recommended in PDF
+        oldest_request_wait_time = self._get_oldest_request_wait_time(request_queue, current_time)
+        avg_queue_wait_time = self._get_average_queue_wait_time(request_queue, current_time)
+        queue_urgency_score = self._compute_queue_urgency(request_queue, current_time)
+
+        # Base features (14 dimensions - EXPANDED from 11)
         vec.extend([
             queue_len,                         # Queue length
             float(num_alloc),                  # Allocated blocks
@@ -160,6 +188,9 @@ class StateBuilder:
             float(batch_cap),                  # Batch capacity
             float(block_size),                 # Block size
             float(num_stages),                 # Number of stages
+            oldest_request_wait_time,          # NEW: Oldest request waiting time (PDF recommendation)
+            avg_queue_wait_time,               # NEW: Average queue waiting time
+            queue_urgency_score,               # NEW: Queue urgency indicator
         ])
 
         # Enhanced features for high-frequency dynamics
@@ -180,6 +211,80 @@ class StateBuilder:
 
         return vec
 
+    def _get_oldest_request_wait_time(self, request_queue: List[Request], current_time: float) -> float:
+        """
+        Get waiting time of the oldest request in queue (PDF recommendation).
+
+        This feature helps the agent infer urgency and avoid sending new traffic
+        to an overloaded replica.
+        """
+        if not request_queue:
+            return 0.0
+
+        oldest_request = request_queue[0]  # Assuming queue is FIFO
+        # Direct attribute access - no fallback allowed per CLAUDE.md regulations
+        arrived_at = float(oldest_request.arrived_at)
+        wait_time = max(0.0, float(current_time) - arrived_at)
+
+        # Normalize to [0, 1] range assuming 10 seconds is "very long wait"
+        normalized_wait = min(wait_time / 10.0, 1.0)
+        return normalized_wait
+
+    def _get_average_queue_wait_time(self, request_queue: List[Request], current_time: float) -> float:
+        """
+        Get average waiting time across all requests in queue.
+
+        Provides a sense of overall queue pressure beyond just queue length.
+        """
+        if not request_queue:
+            return 0.0
+
+        total_wait = 0.0
+        valid_requests = 0
+
+        for request in request_queue:
+            # Direct attribute access - no fallback allowed per CLAUDE.md regulations
+            arrived_at = float(request.arrived_at)
+            wait_time = max(0.0, float(current_time) - arrived_at)
+            total_wait += wait_time
+            valid_requests += 1
+
+        if valid_requests == 0:
+            return 0.0
+
+        avg_wait = total_wait / valid_requests
+        # Normalize to [0, 1] range
+        normalized_avg_wait = min(avg_wait / 10.0, 1.0)
+        return normalized_avg_wait
+
+    def _compute_queue_urgency(self, request_queue: List[Request], current_time: float) -> float:
+        """
+        Compute urgency score based on request priorities and wait times.
+
+        High urgency indicates the replica needs immediate attention.
+        """
+        if not request_queue:
+            return 0.0
+
+        urgency_score = 0.0
+        for request in request_queue:
+            # Direct attribute access - no fallback allowed per CLAUDE.md regulations
+            priority = normalize_priority(get_request_priority(request))
+
+            # Get wait time
+            arrived_at = float(request.arrived_at)
+            wait_time = max(0.0, float(current_time) - arrived_at)
+
+            # Urgency = priority * wait_time_factor
+            wait_factor = min(wait_time / 5.0, 2.0)  # Cap at 2x urgency
+            request_urgency = priority * (1.0 + wait_factor)
+            urgency_score += request_urgency
+
+        # Normalize by queue length and cap at 1.0
+        avg_urgency = urgency_score / len(request_queue) if request_queue else 0.0
+        normalized_urgency = min(avg_urgency / 10.0, 1.0)  # Assuming max urgency ~10
+        return normalized_urgency
+
     def _extract_request_features(self, request: Request, current_time: float) -> List[float]:
         """
         Extract features from a single request.
@@ -188,22 +293,21 @@ class StateBuilder:
         [age, num_prefill, num_processed, remaining_prefill, completed, num_decode, priority]
         """
         # Calculate request age
-        arrived_at = float(
-            getattr(request, "arrived_at", getattr(request, "_arrived_at", 0.0)) or 0.0
-        )
+        # Direct attribute access - no fallback allowed per CLAUDE.md regulations
+        arrived_at = float(request.arrived_at)
         age = max(0.0, float(current_time) - arrived_at)
 
         # Token processing features
-        num_prefill = float(getattr(request, "num_prefill_tokens", 0) or 0.0)
-        num_processed = float(getattr(request, "num_processed_tokens", 0) or 0.0)
+        num_prefill = float(request.num_prefill_tokens)
+        num_processed = float(request.num_processed_tokens)
         remaining_prefill = max(0.0, num_prefill - num_processed)
 
         # Completion status
-        completed = 1.0 if bool(getattr(request, "completed", False)) else 0.0
-        num_decode = float(getattr(request, "num_decode_tokens", 0) or 0.0)
+        completed = 1.0 if bool(request.completed) else 0.0
+        num_decode = float(request.num_decode_tokens)
 
         # Priority normalization
-        priority = normalize_priority(getattr(request, "priority", None))
+        priority = normalize_priority(get_request_priority(request))
 
         return [
             age,
@@ -238,12 +342,12 @@ class StateBuilder:
             "timestamp": current_time
         }
 
-        # Get previous state for delta computation
-        prev_state = self._prev_replica_states.get(replica_id, {})
+        # Get previous state for delta computation - direct access
+        prev_state = self._prev_replica_states[replica_id] if replica_id in self._prev_replica_states else {}
 
         # Delta features (change from previous step)
-        queue_delta = queue_len - prev_state.get("queue_len", queue_len)
-        alloc_delta = alloc_frac - prev_state.get("alloc_frac", alloc_frac)
+        queue_delta = queue_len - (prev_state["queue_len"] if "queue_len" in prev_state else queue_len)
+        alloc_delta = alloc_frac - (prev_state["alloc_frac"] if "alloc_frac" in prev_state else alloc_frac)
 
         # Update history tracking
         self._replica_history[replica_id].append(current_state)
@@ -286,7 +390,7 @@ class StateBuilder:
             if i == 0:
                 continue  # Skip current state
             weight = alpha * ((1 - alpha) ** i)
-            ema += weight * state.get("alloc_frac", 0.0)
+            ema += weight * state["alloc_frac"]
 
         return ema
 
@@ -330,8 +434,8 @@ class StateBuilder:
         if not history:
             return (current_queue, current_queue, 0.0)
 
-        queue_values = [state.get("queue_len", 0.0) for state in history]
-        timestamps = [state.get("timestamp", current_time) for state in history]
+        queue_values = [state["queue_len"] for state in history]
+        timestamps = [state["timestamp"] for state in history]
 
         historical_peak = max(queue_values) if queue_values else current_queue
         historical_low = min(queue_values) if queue_values else current_queue
@@ -391,14 +495,10 @@ class StateBuilder:
 
     def _get_global_queue_length(self, get_replica_scheduler_fn) -> float:
         """Get global queue length from scheduler instance."""
-        try:
-            scheduler = getattr(get_replica_scheduler_fn, "__self__", None)
-            if scheduler is not None:
-                request_queue = getattr(scheduler, "_request_queue", []) or []
-                return float(len(request_queue))
-        except Exception:
-            pass
-        return 0.0
+        # Direct access to scheduler - no fallback allowed per CLAUDE.md regulations
+        scheduler = get_replica_scheduler_fn.__self__
+        request_queue = scheduler._request_queue
+        return float(len(request_queue))
 
     def _get_metrics(
         self,
@@ -409,15 +509,9 @@ class StateBuilder:
         if metric_store is None:
             return (0.0, 0.0)
 
-        try:
-            throughput = float(metric_store.get_throughput(current_time))
-        except Exception:
-            throughput = 0.0
-
-        try:
-            latency = float(metric_store.get_average_latency())
-        except Exception:
-            latency = 0.0
+        # Direct access to metrics - no fallback allowed per CLAUDE.md regulations
+        throughput = float(metric_store.get_throughput(current_time))
+        latency = float(metric_store.get_average_latency())
 
         return (throughput, latency)
 
@@ -497,7 +591,7 @@ class StateBuilder:
             if i == 0:
                 continue  # Skip current
             # Approximate historical QPS from throughput
-            hist_qps = state.get("throughput", 0.0)
+            hist_qps = state["throughput"]
             weight = alpha * ((1 - alpha) ** i)
             ema += weight * hist_qps
 
@@ -510,7 +604,7 @@ class StateBuilder:
 
         # Use throughput as proxy for QPS trend
         recent_throughput = [
-            state.get("throughput", 0.0)
+            state["throughput"]
             for state in list(self._global_history)[-3:]
         ]
 
@@ -536,7 +630,7 @@ class StateBuilder:
             return 0.0
 
         throughput_values = [
-            state.get("throughput", 0.0)
+            state["throughput"]
             for state in self._global_history
         ]
 
@@ -578,7 +672,7 @@ class StateBuilder:
 
     def _compute_global_queue_delta(self, current_global_queue: float) -> float:
         """Compute change in global queue length."""
-        prev_global = self._prev_global_state.get("global_queue", current_global_queue)
+        prev_global = self._prev_global_state["global_queue"] if "global_queue" in self._prev_global_state else current_global_queue
         delta = current_global_queue - prev_global
 
         # Update previous state
@@ -594,7 +688,7 @@ class StateBuilder:
         Values < 1.0 indicate system is falling behind.
         """
         current_qps = self._compute_current_qps(
-            self._global_history[-1].get("timestamp", 0.0) if self._global_history else 0.0
+            self._global_history[-1]["timestamp"] if self._global_history else 0.0
         )
 
         if current_qps == 0:
@@ -613,8 +707,8 @@ class StateBuilder:
         Returns:
             Total dimension of state vector
         """
-        # Base replica features
-        replica_base_features = 11
+        # Base replica features (UPDATED: increased from 11 to 14)
+        replica_base_features = 14
 
         # Enhanced replica features (if enabled)
         enhanced_replica_features = 8 if self.enable_enhanced_features else 0
@@ -637,6 +731,8 @@ class StateBuilder:
 
         total_global_features = base_global_features + enhanced_global_features
 
+        # NOTE: Queue delay features are already included in replica_base_features (14 total)
+        # No need to add them separately here
         return num_replicas * replica_state_dim + total_global_features
 
     def get_feature_names(self, num_replicas: int) -> List[str]:
@@ -655,7 +751,7 @@ class StateBuilder:
         for replica_id in range(num_replicas):
             prefix = f"replica_{replica_id}_"
 
-            # Base replica features
+            # Base replica features (UPDATED: added 3 new queue delay features)
             feature_names.extend([
                 f"{prefix}queue_length",
                 f"{prefix}allocated_blocks",
@@ -668,6 +764,9 @@ class StateBuilder:
                 f"{prefix}batch_capacity",
                 f"{prefix}block_size",
                 f"{prefix}num_stages",
+                f"{prefix}oldest_request_wait_time",  # NEW: PDF recommendation
+                f"{prefix}avg_queue_wait_time",       # NEW: Queue pressure indicator
+                f"{prefix}queue_urgency_score",       # NEW: Priority-weighted urgency
             ])
 
             # Enhanced replica features

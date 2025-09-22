@@ -1,6 +1,7 @@
 {
-  "state_dim": 198,
+  "state_dim": 210,
   "action_dim": 4,
+  "comment": "UPDATED: Increased from 198 to 210 to match enhanced StateBuilder with queue delay features",
   "learning_rate": 1e-4,
   "weight_decay": 1e-4,
   "batch_size": 512,
@@ -10,6 +11,11 @@
   "save_interval": 10,
   "device": "cpu",
   "output_dir": "./outputs/standalone_pretrain",
+  "hidden_size": 320,
+  "layer_N": 3,
+  "gru_layers": 3,
+  "enable_decoupled": false,
+  "feature_projection_dim": 640,
   "network_architecture": {
     "type": "enhanced_gru",
     "hidden_size": 320,
@@ -66,6 +72,21 @@
     "track_gradient_norms": true,
     "track_feature_distributions": true,
     "export_embeddings": true
+  },
+  "state_builder_enhanced": {
+    "enable_queue_delay_features": true,
+    "max_queue_requests": 4,
+    "queue_delay_normalization": {
+      "max_wait_time_seconds": 10.0,
+      "urgency_scale": 10.0,
+      "priority_weight": 1.0
+    },
+    "feature_names": [
+      "oldest_request_wait_time",
+      "avg_queue_wait_time",
+      "queue_urgency_score"
+    ],
+    "comment": "Enhanced state features for queue delay awareness (same as PPO training)"
   },
   "statistics_stabilization": {
     "enable_statistics_stabilization": true,

@@ -25,8 +25,10 @@ from vidur.scheduler.global_scheduler.random_global_scheduler_with_state import 
 from src.core.models import ActorCritic, StateBuilder
 from src.core.algorithms import PPOTrainer, RolloutBuffer
 from src.core.algorithms.rewards import RewardCalculator
+from src.core.algorithms.curriculum_manager import CurriculumManager
 from src.core.utils import RunningNormalizer, TemperatureController
 from src.core.utils.monitoring import TensorBoardMonitor, MetricsExporter
+from src.core.utils.monitoring.tail_latency_monitor import TailLatencyMonitor, TailLatencyAggregator
 from src.core.utils.infrastructure.checkpoints import CheckpointManager
 
 # 其他组件导入 (如果存在)
@@ -63,6 +65,9 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
 
         # Extract configuration parameters - direct access, no fallback allowed
         gcfg = config.cluster_config.global_scheduler_config
+        from vidur.config.config import PPOGlobalSchedulerModularConfig
+        if not isinstance(gcfg, PPOGlobalSchedulerModularConfig):
+            raise ValueError(f"Expected PPOGlobalSchedulerModularConfig, got {type(gcfg)}")
 
         # PPO hyperparameters - direct access from config
         self._hidden_size    = int(gcfg.hidden_size)
@@ -78,6 +83,12 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         self._rollout_len    = int(gcfg.rollout_len)
         self._minibatch_size = int(gcfg.minibatch_size)
         self._max_grad_norm  = float(gcfg.max_grad_norm)
+
+        # NEW: Entropy schedule parameters
+        self._entropy_schedule_enable = getattr(gcfg, 'entropy_schedule_enable', False)
+        self._entropy_initial = getattr(gcfg, 'entropy_initial', self._entropy_coef)
+        self._entropy_final = getattr(gcfg, 'entropy_final', 0.0)
+        self._entropy_decay_steps = getattr(gcfg, 'entropy_decay_steps', 40000)
 
         # Reward calculation parameters - direct access
         self._reward_latency_weight   = float(gcfg.reward_latency_weight)
@@ -103,11 +114,23 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         self._state_history_window = int(gcfg.state_history_window)
         self._qps_window = int(gcfg.qps_window)
 
+        # NEW: Enhanced StateBuilder with queue delay features
+        enable_queue_delay_features = getattr(gcfg, 'enable_queue_delay_features', False)
+        queue_delay_max_wait_time = getattr(gcfg, 'queue_delay_max_wait_time', 10.0)
+        queue_delay_urgency_scale = getattr(gcfg, 'queue_delay_urgency_scale', 10.0)
+        queue_delay_priority_weight = getattr(gcfg, 'queue_delay_priority_weight', 1.0)
+
         self._state_builder = StateBuilder(
             max_queue_requests=self._max_queue_requests,
             history_window=self._state_history_window,
             qps_window=self._qps_window,
-            enable_enhanced_features=self._enable_enhanced_features
+            enable_enhanced_features=self._enable_enhanced_features,
+            enable_queue_delay_features=enable_queue_delay_features,
+            queue_delay_normalization={
+                "max_wait_time_seconds": queue_delay_max_wait_time,
+                "urgency_scale": queue_delay_urgency_scale,
+                "priority_weight": queue_delay_priority_weight
+            }
         )
 
         # Enhanced reward calculation parameters - direct access, no fallback allowed
@@ -182,18 +205,32 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
 
         # Enhanced Actor-Critic architecture parameters
         self._enable_decoupled_ac = bool(gcfg.enable_decoupled_ac)
-        self._feature_projection_dim = int(gcfg.feature_projection_dim) if gcfg.feature_projection_dim > 0 else None
+        self._feature_projection_dim = int(gcfg.feature_projection_dim) if gcfg.feature_projection_dim > 0 else self._hidden_size * 2
 
-        # Initialize Enhanced Actor-Critic network
+        # NEW: Network architecture configuration
+        self._enable_cross_replica_attention = bool(gcfg.enable_cross_replica_attention)
+        self._cross_replica_attention_heads = int(gcfg.cross_replica_attention_heads)
+        self._cross_replica_num_replicas = int(gcfg.cross_replica_num_replicas)
+
+        # Actor network architecture parameters
+        self._actor_hidden_size = int(gcfg.actor_hidden_size) if gcfg.actor_hidden_size > 0 else self._hidden_size
+        self._actor_gru_layers = int(gcfg.actor_gru_layers) if gcfg.actor_gru_layers > 0 else self._gru_layers
+        self._enable_temperature_scaling = bool(gcfg.enable_temperature_scaling)
+
+        # Initialize Enhanced Actor-Critic network with new architecture parameters
         self._ac = ActorCritic(
             state_dim=state_dim,
             action_dim=action_dim,
-            hidden_size=self._hidden_size,
+            hidden_size=self._actor_hidden_size,  # Use actor-specific hidden size
             layer_N=self._layer_N,
-            gru_layers=self._gru_layers,
+            gru_layers=self._actor_gru_layers,    # Use actor-specific GRU layers
             use_orthogonal=True,
             enable_decoupled=self._enable_decoupled_ac,
             feature_projection_dim=self._feature_projection_dim,
+            # NEW: Cross-replica attention configuration
+            enable_cross_replica_attention=self._enable_cross_replica_attention,
+            attention_heads=self._cross_replica_attention_heads,
+            num_replicas=self._cross_replica_num_replicas,
         ).to(self._device)
 
         # Initialize PPO trainer
@@ -202,6 +239,11 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             lr=self._lr,
             clip_ratio=self._clip_ratio,
             entropy_coef=self._entropy_coef,
+            # NEW: Entropy schedule parameters
+            entropy_schedule_enable=self._entropy_schedule_enable,
+            entropy_initial=self._entropy_initial,
+            entropy_final=self._entropy_final,
+            entropy_decay_steps=self._entropy_decay_steps,
             value_coef=self._value_coef,
             epochs=self._epochs,
             minibatch_size=self._minibatch_size,
@@ -221,16 +263,16 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             device=self._device,
         )
 
-        # GRU hidden state initialization
+        # GRU hidden state initialization - use architecture-specific dimensions
         # Initialize hidden states for Actor-Critic
         if self._enable_decoupled_ac:
-            # Separate hidden states for actor and critic
-            hxs_actor = torch.zeros(self._gru_layers, 1, self._hidden_size, device=self._device)
-            hxs_critic = torch.zeros(1, 1, self._hidden_size, device=self._device)  # Critic has 1 GRU layer
+            # Separate hidden states for actor and critic with correct dimensions
+            hxs_actor = torch.zeros(self._actor_gru_layers, 1, self._actor_hidden_size, device=self._device)
+            hxs_critic = torch.zeros(1, 1, self._actor_hidden_size, device=self._device)  # Critic uses single layer but actor's hidden size
             self._hxs = (hxs_actor, hxs_critic)
         else:
-            # Single shared hidden state
-            self._hxs = torch.zeros(self._gru_layers, 1, self._hidden_size, device=self._device)
+            # Single shared hidden state using actor dimensions
+            self._hxs = torch.zeros(self._actor_gru_layers, 1, self._actor_hidden_size, device=self._device)
 
         # Training state
         self._step: int = 0
@@ -300,6 +342,51 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             max_checkpoints=self._max_checkpoints,
             auto_save=self._enable_checkpoints and not self._inference_only,
         )
+
+        # Curriculum learning configuration - direct access with base64 support
+        import json
+        import base64
+
+        # Try base64-encoded parameter first (new, shell-safe method)
+        curriculum_stages_base64 = getattr(gcfg, 'curriculum_stages_json_base64', '')
+        if curriculum_stages_base64:
+            try:
+                # Decode base64 and then parse JSON
+                decoded_json = base64.b64decode(curriculum_stages_base64).decode('utf-8')
+                curriculum_stages = json.loads(decoded_json)
+            except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+                curriculum_stages = []
+        else:
+            # Fallback to original JSON parameter (for backward compatibility)
+            curriculum_stages_json = getattr(gcfg, 'curriculum_stages_json', '[]')
+            try:
+                curriculum_stages = json.loads(curriculum_stages_json)
+            except json.JSONDecodeError:
+                curriculum_stages = []
+
+        curriculum_config = {
+            "enable": getattr(gcfg, 'enable_curriculum_learning', False),
+            "stages": curriculum_stages
+        }
+        self._curriculum_manager = CurriculumManager(curriculum_config)
+        self._requests_processed = 0
+
+        # Tail latency monitoring configuration - direct access
+        self._tail_latency_tracking_enabled = getattr(gcfg, 'tail_latency_tracking_enable', True)
+        self._tail_latency_percentiles = getattr(gcfg, 'tail_latency_percentiles', [90, 95, 99])
+        self._tail_latency_window_size = getattr(gcfg, 'tail_latency_window_size', 1000)
+        self._tail_latency_alert_threshold_p99 = getattr(gcfg, 'tail_latency_alert_threshold_p99', 5.0)
+
+        self._tail_latency_monitor = TailLatencyMonitor(
+            percentiles=self._tail_latency_percentiles,
+            window_size=self._tail_latency_window_size,
+            alert_threshold_p99=self._tail_latency_alert_threshold_p99,
+            enable_alerts=True,
+            enable_tracking=self._tail_latency_tracking_enabled
+        )
+
+        self._tail_latency_aggregator = TailLatencyAggregator()
+        self._tail_latency_aggregator.add_replica_monitor(0, self._tail_latency_monitor)
 
         # Handle checkpoint loading and inference mode
         if self._load_checkpoint:
@@ -546,6 +633,16 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         if not self._request_queue:
             return []
 
+        # Update curriculum learning progress
+        num_requests = len(self._request_queue)
+        if num_requests > 0:
+            self._requests_processed += num_requests
+            stage_changed = self._curriculum_manager.update(num_requests)
+            if stage_changed:
+                curriculum_info = self._curriculum_manager.get_stage_info()
+                logger.info(f"🎓 Curriculum stage changed to: {curriculum_info['stage_name']} "
+                          f"(Stage {curriculum_info['stage_index']}/{curriculum_info['total_stages']})")
+
         # Statistics stabilization phase (separate from training warmup)
         if (self._enable_statistics_stabilization and
             not self._statistics_stabilization_completed and
@@ -596,13 +693,23 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
                 r = 0.0
                 reward_info = {"skipped_invalid_metrics": True, "first_step": True}
         else:
-            # Normal reward calculation
+            # Normal reward calculation with curriculum learning scaling
             r, reward_info = self._reward_calc.calculate_reward(
                 self._metric_store,
                 self._current_time,
                 self._replica_ids,
                 self.get_replica_scheduler,
             )
+
+            # Apply curriculum learning penalty scaling
+            curriculum_params = self._curriculum_manager.get_current_parameters()
+            penalty_scale = curriculum_params["reward_penalty_scale"]
+            if penalty_scale != 1.0:
+                # Scale negative rewards (penalties) but keep positive rewards unchanged
+                if r < 0:
+                    r = r * penalty_scale
+                    reward_info["curriculum_penalty_scale"] = penalty_scale
+
             # Store for potential reuse if next step has invalid metrics
             self._last_reward = r
             self._last_reward_info = reward_info
@@ -610,6 +717,29 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         # Log reward metrics to TensorBoard
         if self._tb_monitor.is_active():
             self._tb_monitor.log_reward_metrics(reward_info, r, step=self._step)
+
+            # Log curriculum learning metrics
+            curriculum_info = self._curriculum_manager.get_stage_info()
+            if curriculum_info["enabled"]:
+                self._tb_monitor._log_scalar("curriculum/stage_index", curriculum_info["stage_index"], step=self._step)
+                self._tb_monitor._log_scalar("curriculum/stage_progress", curriculum_info["stage_progress"], step=self._step)
+                self._tb_monitor._log_scalar("curriculum/qps_scale", curriculum_params["qps_scale"], step=self._step)
+                self._tb_monitor._log_scalar("curriculum/latency_threshold_scale", curriculum_params["latency_threshold_scale"], step=self._step)
+                self._tb_monitor._log_scalar("curriculum/reward_penalty_scale", curriculum_params["reward_penalty_scale"], step=self._step)
+
+            # Update and log tail latency monitoring
+            if self._tail_latency_tracking_enabled and "latency" in reward_info:
+                current_latency = reward_info["latency"]
+                alert_triggered = self._tail_latency_monitor.update(current_latency)
+
+                if alert_triggered:
+                    logger.warning(f"🚨 Tail latency alert: P99={self._tail_latency_monitor.current_percentiles.get(99, 0):.3f}s "
+                                 f"exceeds threshold {self._tail_latency_alert_threshold_p99}s")
+
+                # Log tail latency metrics
+                tail_metrics = self._tail_latency_monitor.get_metrics()
+                for metric_name, metric_value in tail_metrics.items():
+                    self._tb_monitor._log_scalar(f"tail_latency/{metric_name}", metric_value, step=self._step)
 
         # 3) Determine episode continuation mask
         idle = 1 if (len(self._request_queue) == 0) else 0

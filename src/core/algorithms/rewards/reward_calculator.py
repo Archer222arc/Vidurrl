@@ -48,19 +48,19 @@ class RewardCalculator:
         mode: str = "delta",
         latency_weight: float = 1.0,
         balance_penalty_weight: float = 0.0,
-        latency_threshold: float = 2.0,
-        latency_penalty_scale: float = 5.0,
-        load_balance_penalty: float = 0.03,
-        # New parameters for restructured reward
+        latency_threshold: float = 1.5,  # IMPROVED: Reduced from 2.0 to be more strict
+        latency_penalty_scale: float = 3.0,  # IMPROVED: Reduced from 5.0 to soften penalty curve
+        load_balance_penalty: float = 0.05,  # IMPROVED: Increased from 0.03 for better balance
+        # New parameters for restructured reward - OPTIMIZED VALUES
         throughput_target: float = 10.0,
-        absolute_weight: float = 0.7,
-        delta_weight: float = 0.3,
-        alpha: float = 0.5,
-        beta: float = 0.3,
-        gamma: float = 0.2,
-        kappa: float = 0.3,
-        sigma: float = 1.0,
-        ema_alpha: float = 0.1,
+        absolute_weight: float = 0.6,  # IMPROVED: Reduced from 0.7 to balance abs vs delta
+        delta_weight: float = 0.4,     # IMPROVED: Increased from 0.3 to emphasize improvement
+        alpha: float = 0.4,            # IMPROVED: Reduced from 0.5 to reduce latency dominance
+        beta: float = 0.4,             # IMPROVED: Increased from 0.3 for better throughput signal
+        gamma: float = 0.3,            # IMPROVED: Increased from 0.2 for stronger latency signal
+        kappa: float = 0.25,           # IMPROVED: Reduced from 0.3 to soften logistic penalty
+        sigma: float = 1.2,            # IMPROVED: Increased from 1.0 for smoother penalty curve
+        ema_alpha: float = 0.15,       # IMPROVED: Increased from 0.1 for faster adaptation
     ):
         """
         Initialize enhanced reward calculator.
@@ -313,10 +313,10 @@ class RewardCalculator:
                 - latency_threshold_penalty  # Soft latency threshold penalty
             )
 
-            # Apply linear scaling to preserve gradient information
-            # Use gentle clipping instead of tanh to avoid saturation
-            reward_scale = 2.0  # Increased sensitivity for better learning signals
-            reward = float(np.clip(raw_reward / reward_scale, -3.0, 3.0))
+            # Apply adaptive scaling to remove performance ceiling
+            # CRITICAL FIX: Remove hard clipping that prevents outperforming baselines
+            reward_scale = 1.0  # IMPROVED: Further reduced scale to preserve more gradient info
+            reward = self._adaptive_reward_scaling(raw_reward, reward_scale)
 
             # Store detailed breakdown for analysis with raw/clipped values
             self.reward_breakdown = {
@@ -327,7 +327,8 @@ class RewardCalculator:
                 "latency_threshold_penalty": -latency_threshold_penalty,
                 "raw_reward": raw_reward,  # Show original value before clipping
                 "total_reward": reward,     # Show final clipped value
-                "reward_clipped": abs(raw_reward) > 3.0,  # Flag if raw reward exceeds reasonable range
+                "reward_ceiling_removed": True,  # Track that ceiling has been removed
+                "uses_adaptive_scaling": True,  # Flag that we're using new scaling method
                 "raw_throughput": raw_throughput,    # Show original metric values
                 "raw_latency": raw_latency,          # For debugging 0-value issues
             }
@@ -349,9 +350,9 @@ class RewardCalculator:
                 - latency_threshold_penalty  # Soft latency threshold penalty
             )
 
-            # Apply linear scaling consistent with delta mode
-            reward_scale = 2.0  # Same scale as delta mode for consistency
-            reward = float(np.clip(raw_reward / reward_scale, -3.0, 3.0))
+            # Apply adaptive scaling consistent with delta mode
+            reward_scale = 1.0  # IMPROVED: Same optimized scale as delta mode for consistency
+            reward = self._adaptive_reward_scaling(raw_reward, reward_scale)
 
             # Store breakdown for analysis with raw/scaled values
             self.reward_breakdown = {
@@ -362,7 +363,8 @@ class RewardCalculator:
                 "latency_threshold_penalty": -latency_threshold_penalty,
                 "raw_reward": raw_reward,  # Show original value before scaling
                 "total_reward": reward,     # Show final scaled value
-                "reward_clipped": abs(raw_reward) > 3.0,  # Flag if raw reward exceeds reasonable range
+                "reward_ceiling_removed": True,  # Track that ceiling has been removed
+                "uses_adaptive_scaling": True,  # Flag that we're using new scaling method
                 "raw_throughput": raw_throughput,
                 "raw_latency": raw_latency,
             }
@@ -384,20 +386,22 @@ class RewardCalculator:
             # Enhanced load balance penalties
             load_balance_penalty = self.calculate_load_balance_penalty(replica_ids, get_replica_scheduler_fn)
             direct_imbalance_penalty = self.calculate_direct_load_imbalance_penalty(replica_ids, get_replica_scheduler_fn)
+            extreme_imbalance_penalty = self.calculate_extreme_imbalance_penalty(replica_ids, get_replica_scheduler_fn)
 
-            # Combine components with new weighting structure emphasizing load balance
+            # Combine components with enhanced load balance penalties
             raw_reward = (
                 self.absolute_weight * absolute_score  # Primary: absolute performance
                 + self.delta_weight * delta_score      # Secondary: improvement signal
                 - self.load_balance_penalty * load_balance_penalty  # Legacy load balance penalty
-                - 1.0 * direct_imbalance_penalty       # NEW: Direct std dev penalty with high weight
+                - 2.0 * direct_imbalance_penalty       # ENHANCED: Increased penalty weight to discourage hot-spotting
+                - extreme_imbalance_penalty            # NEW: Severe penalty for extreme hot-spotting
                 - logistic_penalty                     # Smooth latency penalty
             )
 
-            # Apply linear scaling instead of tanh to prevent saturation
-            # Use gentle clipping only at extreme values to preserve gradient information
-            reward_scale = 1.5  # Reduced scale for better reward variance
-            reward = float(np.clip(raw_reward / reward_scale, -4.0, 4.0))
+            # Apply adaptive scaling to preserve gradient information
+            # CRITICAL FIX: Remove clipping ceiling to allow exceeding baseline performance
+            reward_scale = 1.2  # Further reduced scale for better reward variance
+            reward = self._adaptive_reward_scaling(raw_reward, reward_scale)
 
             # Calculate deltas for monitoring
             delta_throughput = throughput - self.last_throughput
@@ -409,7 +413,8 @@ class RewardCalculator:
                 "delta_score": delta_score,
                 "logistic_penalty": logistic_penalty,
                 "load_balance_penalty": load_balance_penalty,
-                "direct_imbalance_penalty": direct_imbalance_penalty,  # NEW: Track direct penalty
+                "direct_imbalance_penalty": direct_imbalance_penalty,  # Track direct penalty
+                "extreme_imbalance_penalty": extreme_imbalance_penalty,  # NEW: Track extreme penalty
                 "throughput_ema": self.throughput_ema,
                 "latency_ema": self.latency_ema,
                 "throughput_var": self.throughput_var,
@@ -429,7 +434,8 @@ class RewardCalculator:
                 "absolute_score": absolute_score,
                 "delta_score": delta_score,
                 "logistic_penalty": logistic_penalty,
-                "direct_imbalance_penalty": direct_imbalance_penalty,  # NEW: Include in info
+                "direct_imbalance_penalty": direct_imbalance_penalty,  # Include in info
+                "extreme_imbalance_penalty": extreme_imbalance_penalty,  # NEW: Include extreme penalty in info
                 "mode": "hybrid",
                 **self.reward_breakdown
             })
@@ -518,6 +524,51 @@ class RewardCalculator:
         std_dev = variance ** 0.5
 
         return float(std_dev)
+
+    def calculate_extreme_imbalance_penalty(
+        self,
+        replica_ids: List[int],
+        get_replica_scheduler_fn,
+    ) -> float:
+        """
+        Calculate additional penalty for extreme load imbalance situations.
+
+        This helps discourage the agent from creating severe hot-spots that could
+        lead to system instability or poor user experience.
+
+        Args:
+            replica_ids: List of replica IDs
+            get_replica_scheduler_fn: Function to get replica scheduler
+
+        Returns:
+            Extreme imbalance penalty (exponential penalty for severe imbalance)
+        """
+        queue_lengths: List[float] = []
+
+        for replica_id in replica_ids:
+            scheduler = get_replica_scheduler_fn(replica_id)
+            queue = scheduler._request_queue
+            queue_length = len(queue)
+            queue_lengths.append(float(queue_length))
+
+        if len(queue_lengths) < 2:
+            return 0.0
+
+        # Check for extreme imbalance (one replica has >80% of total load)
+        total_load = sum(queue_lengths)
+        if total_load == 0:
+            return 0.0
+
+        max_load_fraction = max(queue_lengths) / total_load
+
+        # Apply exponential penalty for severe imbalance
+        if max_load_fraction > 0.8:
+            # Severe penalty for hot-spotting
+            excess = max_load_fraction - 0.8
+            penalty = 5.0 * (excess ** 2)  # Quadratic penalty for extreme cases
+            return float(penalty)
+
+        return 0.0
 
     def calculate_absolute_score(self, throughput: float, latency: float) -> float:
         """
@@ -626,3 +677,34 @@ class RewardCalculator:
         self.latency_var = 0.0
         self.reward_breakdown = {}
         self.step_count = 0
+
+    def _adaptive_reward_scaling(self, raw_reward: float, scale_factor: float = 1.5) -> float:
+        """
+        Adaptive reward scaling that removes hard clipping ceiling.
+
+        CRITICAL: This replaces the hard clipping that was preventing the agent
+        from learning to outperform Round Robin and Random baselines.
+
+        Args:
+            raw_reward: Unscaled reward value
+            scale_factor: Base scaling factor
+
+        Returns:
+            Scaled reward without artificial ceiling
+        """
+        # Apply base scaling
+        scaled_reward = raw_reward / scale_factor
+
+        # For moderate values, use linear scaling (no ceiling)
+        if abs(scaled_reward) <= 4.0:
+            return float(scaled_reward)
+
+        # For extreme values, use soft compression instead of hard clipping
+        # This preserves gradient information while handling outliers
+        sign = 1.0 if scaled_reward >= 0 else -1.0
+        abs_scaled = abs(scaled_reward)
+
+        # Logarithmic compression for values > 4.0 (no hard ceiling)
+        compressed = 4.0 + np.log(1.0 + abs_scaled - 4.0)
+
+        return float(sign * compressed)

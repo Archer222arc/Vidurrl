@@ -9,6 +9,7 @@
 import argparse
 import json
 import pickle
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -19,8 +20,13 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from ....models.actor_critic import ActorCritic
-from ....utils.normalizers import RunningNormalizer
+# 确保可以导入项目模块
+repo_root = Path(__file__).resolve().parent.parent.parent.parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+
+from src.core.models.actor_critic import ActorCritic
+from src.core.utils.normalizers import RunningNormalizer
 
 
 class EnhancedDemoDataset(Dataset):

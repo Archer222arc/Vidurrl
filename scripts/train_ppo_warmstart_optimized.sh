@@ -375,7 +375,7 @@ if [ "$SKIP_WARMSTART" = false ]; then
         local output_path="$1"
         local temp_dir="${OUTPUT_DIR}/temp_demo"
 
-        python -m src.demo_collection.mixed_collector \
+        python scripts/collect_demo_mixed.py \
           --output "${output_path}" \
           --policies ${DEMO_POLICIES} \
           --steps_per_policy "${DEMO_STEPS_PER_POLICY}" \
@@ -405,14 +405,32 @@ if [ "$SKIP_WARMSTART" = false ]; then
             echo "🤖 [阶段2] Actor预训练 (行为克隆) - 增强版..."
         fi
 
+    # Extract architecture parameters from config file
+    if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
+        echo "📄 提取网络架构参数从配置文件: $CONFIG_FILE"
+        ACTOR_HIDDEN_SIZE=$(python -c "import json; cfg=json.load(open('$CONFIG_FILE')); print(cfg['actor_critic_architecture']['actor']['hidden_size'])")
+        ACTOR_GRU_LAYERS=$(python -c "import json; cfg=json.load(open('$CONFIG_FILE')); print(cfg['actor_critic_architecture']['actor']['gru_layers'])")
+        ACTOR_NUM_LAYERS=$(python -c "import json; cfg=json.load(open('$CONFIG_FILE')); print(cfg['actor_critic_architecture']['actor']['num_layers'])")
+    else
+        echo "📄 提取网络架构参数从默认配置文件"
+        ACTOR_HIDDEN_SIZE=$(python -c "import json; cfg=json.load(open('configs/ppo_warmstart.json')); print(cfg['actor_critic_architecture']['actor']['hidden_size'])")
+        ACTOR_GRU_LAYERS=$(python -c "import json; cfg=json.load(open('configs/ppo_warmstart.json')); print(cfg['actor_critic_architecture']['actor']['gru_layers'])")
+        ACTOR_NUM_LAYERS=$(python -c "import json; cfg=json.load(open('configs/ppo_warmstart.json')); print(cfg['actor_critic_architecture']['actor']['num_layers'])")
+    fi
+
+    echo "🏗️ 使用网络架构参数:"
+    echo "   - Actor Hidden Size: ${ACTOR_HIDDEN_SIZE}"
+    echo "   - Actor GRU Layers: ${ACTOR_GRU_LAYERS}"
+    echo "   - Actor MLP Layers: ${ACTOR_NUM_LAYERS}"
+
     python scripts/pretrain_actor.py \
       --demo "${DEMO_DATA_PATH}" \
       --epochs "${BC_EPOCHS}" \
       --batch_size 256 \
       --lr 5e-4 \
-      --hidden_size 128 \
-      --layer_N 2 \
-      --gru_layers 2 \
+      --hidden_size "${ACTOR_HIDDEN_SIZE}" \
+      --layer_N "${ACTOR_NUM_LAYERS}" \
+      --gru_layers "${ACTOR_GRU_LAYERS}" \
       --output "${PRETRAINED_ACTOR_PATH}"
 
         if [ $? -eq 0 ]; then

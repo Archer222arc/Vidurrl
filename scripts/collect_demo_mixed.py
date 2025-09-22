@@ -37,6 +37,7 @@ _bootstrap_repo_path()
 from vidur.config import SimulationConfig
 from vidur.simulator import Simulator
 from vidur.entities import Replica
+from src.core.models.state_builder import StateBuilder
 
 
 class MixedDemoCollector:
@@ -51,6 +52,14 @@ class MixedDemoCollector:
         """
         self.policies = policies or ["round_robin", "lor", "random"]
         self.all_demo_data = []
+
+        # 初始化增强的StateBuilder (与PPO配置保持一致)
+        self.state_builder = StateBuilder(
+            max_queue_requests=4,
+            history_window=5,
+            qps_window=10,
+            enable_enhanced_features=True
+        )
 
     def collect_mixed_demonstrations(
         self,
@@ -129,11 +138,16 @@ class MixedDemoCollector:
         original_schedule = simulator._scheduler.schedule
 
         def schedule_with_collection():
-            # 获取状态
-            if hasattr(simulator._scheduler, 'get_current_state'):
-                state = simulator._scheduler.get_current_state()
-            else:
-                # 对于非PPO调度器，手动构建状态
+            # 使用增强的StateBuilder构建状态
+            try:
+                state = self.state_builder.build_global_state(
+                    simulator._scheduler._replicas,
+                    simulator._scheduler.get_replica_scheduler,
+                    simulator._scheduler._current_time,
+                    getattr(simulator._scheduler, '_metric_store', None)
+                )
+            except Exception as e:
+                print(f"⚠️ StateBuilder失败，回退到简化状态: {e}")
                 state = self._build_state_for_heuristic(simulator._scheduler)
 
             # 执行原始调度

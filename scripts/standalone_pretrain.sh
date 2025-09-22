@@ -16,6 +16,9 @@ set -e
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONPATH="${REPO_ROOT}"
 
+echo "📂 Repo root: ${REPO_ROOT}"
+echo "🐍 Python path: ${PYTHONPATH}"
+
 # 默认配置文件
 DEFAULT_CONFIG="configs/standalone_pretrain.json"
 CONFIG_FILE="${1:-$DEFAULT_CONFIG}"
@@ -57,14 +60,12 @@ else
     echo "💡 此数据集将被重复使用，避免重复收集"
 
     # 收集标准的预训练数据集（更大规模）
-    python -m src.demo_collection.mixed_collector \
+    python scripts/collect_demo_mixed.py \
         --output "$DEMO_FILE" \
         --policies round_robin lor random \
         --steps_per_policy 1000 \
-        --num_replicas 4 \
-        --qps 3.0 \
-        --temp_dir "${DEMO_DIR}/temp_collection" \
-        --include_imbalanced
+        --replicas 4 \
+        --qps 3.0
 
     if [ $? -eq 0 ]; then
         echo "✅ 标准预训练数据集收集完成"
@@ -89,7 +90,7 @@ print(f'🎯 策略分布: {list(stats.get(\"policy_distribution\", {}).keys())}
 fi
 
 # 调用统一预训练管理器
-python -m src.pretraining.unified_trainer --config "$CONFIG_FILE" --demo-files "$DEMO_FILE"
+python src/core/algorithms/training/pretraining/unified_trainer.py --config "$CONFIG_FILE" --demo-files "$DEMO_FILE"
 
 if [ $? -eq 0 ]; then
     echo "✅ 独立预训练完成"

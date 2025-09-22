@@ -414,13 +414,28 @@ def extract_metrics_from_csv(simulator_dir):
             df = pd.read_csv(request_metrics_file)
             if len(df) > 0:
                 avg_latency = df['request_e2e_time'].mean()
-                # 估算吞吐量（请求数/总时间）
-                total_time = df['request_e2e_time'].sum() / len(df) if len(df) > 0 else 1
-                throughput = len(df) / max(total_time, 1)
+
+                # 正确计算吞吐量：需要时间范围信息
+                throughput = "N/A"  # 默认无法计算
+
+                # 尝试从时间戳列计算总执行时间
+                if 'request_arrival_time' in df.columns and 'request_completion_time' in df.columns:
+                    start_time = df['request_arrival_time'].min()
+                    end_time = df['request_completion_time'].max()
+                    total_duration = end_time - start_time
+                    if total_duration > 0:
+                        throughput = f"{len(df) / total_duration:.3f}"
+                elif 'timestamp' in df.columns:
+                    start_time = df['timestamp'].min()
+                    end_time = df['timestamp'].max()
+                    total_duration = end_time - start_time
+                    if total_duration > 0:
+                        throughput = f"{len(df) / total_duration:.3f}"
+
                 return {
                     "status": "✅ 成功",
                     "latency": f"{avg_latency:.3f}",
-                    "throughput": f"{throughput:.3f}"
+                    "throughput": throughput
                 }
 
         return {"status": "⚠️ 无数据", "latency": "N/A", "throughput": "N/A"}

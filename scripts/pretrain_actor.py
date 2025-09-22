@@ -31,7 +31,7 @@ def _bootstrap_repo_path() -> None:
 
 _bootstrap_repo_path()
 
-from src.pretraining.unified_trainer import UnifiedPretrainer
+from src.core.algorithms.training.pretraining.unified_trainer import UnifiedPretrainer
 
 
 def main():

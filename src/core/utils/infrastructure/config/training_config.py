@@ -45,6 +45,84 @@ def build_ppo_args(config: Dict, output_dir: str) -> List[str]:
         f"{ppo_prefix}stabilization_steps", str(ppo_cfg["stabilization_steps"])
     ])
 
+    # Entropy schedule configuration (NEW)
+    if "entropy_schedule" in ppo_cfg and ppo_cfg["entropy_schedule"]["enable"]:
+        entropy_sched = ppo_cfg["entropy_schedule"]
+        args.extend([
+            f"{ppo_prefix}entropy_schedule_enable",
+            f"{ppo_prefix}entropy_initial", str(entropy_sched["initial"]),
+            f"{ppo_prefix}entropy_final", str(entropy_sched["final"]),
+            f"{ppo_prefix}entropy_decay_steps", str(entropy_sched["decay_steps"])
+        ])
+
+    # Curriculum learning configuration (NEW)
+    if "curriculum_learning" in config and config["curriculum_learning"]["enable"]:
+        curriculum_cfg = config["curriculum_learning"]
+        args.append(f"{ppo_prefix}enable_curriculum_learning")
+
+        # Pass curriculum stages as base64-encoded JSON to avoid shell parsing issues
+        import json
+        import base64
+        stages_json = json.dumps(curriculum_cfg["stages"])
+        # Encode JSON as base64 to avoid all shell special characters
+        encoded_stages = base64.b64encode(stages_json.encode('utf-8')).decode('ascii')
+        args.extend([
+            f"{ppo_prefix}curriculum_stages_json_base64", encoded_stages
+        ])
+
+    # Tail latency monitoring configuration (NEW)
+    if "monitoring" in config and "tail_latency_tracking" in config["monitoring"]:
+        if config["monitoring"]["tail_latency_tracking"]["enable"]:
+            tail_cfg = config["monitoring"]["tail_latency_tracking"]
+            args.extend([
+                f"{ppo_prefix}tail_latency_tracking_enable",
+                f"{ppo_prefix}tail_latency_alert_threshold_p99", str(tail_cfg["alert_threshold_p99"]),
+                f"{ppo_prefix}tail_latency_window_size", str(tail_cfg["window_size"])
+            ])
+
+    # State builder enhanced features configuration (NEW)
+    if "state_builder_enhanced" in config:
+        state_builder_cfg = config["state_builder_enhanced"]
+        if state_builder_cfg.get("enable_queue_delay_features", False):
+            args.append(f"{ppo_prefix}enable_queue_delay_features")
+            args.extend([
+                f"{ppo_prefix}queue_delay_max_wait_time", str(state_builder_cfg["queue_delay_normalization"]["max_wait_time_seconds"]),
+                f"{ppo_prefix}queue_delay_urgency_scale", str(state_builder_cfg["queue_delay_normalization"]["urgency_scale"]),
+                f"{ppo_prefix}queue_delay_priority_weight", str(state_builder_cfg["queue_delay_normalization"]["priority_weight"])
+            ])
+
+    # Network architecture configuration (NEW)
+    if "actor_critic_architecture" in config:
+        network_cfg = config["actor_critic_architecture"]
+
+        # Cross-replica attention configuration
+        if network_cfg.get("enable_cross_replica_attention", False):
+            cross_replica_cfg = network_cfg.get("cross_replica_attention", {})
+            args.extend([
+                f"{ppo_prefix}enable_cross_replica_attention",
+                f"{ppo_prefix}cross_replica_attention_heads", str(network_cfg.get("attention_heads", 4)),
+                f"{ppo_prefix}cross_replica_num_replicas", str(network_cfg.get("num_replicas", 4))
+            ])
+
+        # Actor architecture
+        if "actor" in network_cfg:
+            actor_cfg = network_cfg["actor"]
+            if "hidden_size" in actor_cfg:
+                args.extend([f"{ppo_prefix}actor_hidden_size", str(actor_cfg["hidden_size"])])
+            if "gru_layers" in actor_cfg:
+                args.extend([f"{ppo_prefix}actor_gru_layers", str(actor_cfg["gru_layers"])])
+            if "temperature_scaling" in actor_cfg:
+                if actor_cfg["temperature_scaling"]:
+                    args.append(f"{ppo_prefix}enable_temperature_scaling")
+
+        # Critic architecture
+        if "critic" in network_cfg:
+            critic_cfg = network_cfg["critic"]
+            if "hidden_size" in critic_cfg:
+                args.extend([f"{ppo_prefix}critic_hidden_size", str(critic_cfg["hidden_size"])])
+            if "gru_layers" in critic_cfg:
+                args.extend([f"{ppo_prefix}critic_gru_layers", str(critic_cfg["gru_layers"])])
+
     # Reward configuration
     reward_cfg = config["reward_config"]
     args.extend([

@@ -13,14 +13,20 @@
 import argparse
 import json
 import pickle
+import sys
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union
 import torch
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 
-from .behavior_cloning_trainer import BehaviorCloningTrainer, DemoDataset, create_bc_trainer_from_config
-from .model_validator import validate_pretrained_model
+# 确保可以导入项目模块
+repo_root = Path(__file__).resolve().parent.parent.parent.parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+
+from src.core.algorithms.training.pretraining.behavior_cloning_trainer import BehaviorCloningTrainer, DemoDataset, create_bc_trainer_from_config
+from src.core.algorithms.training.pretraining.model_validator import validate_pretrained_model
 
 
 class UnifiedPretrainer:
@@ -83,7 +89,7 @@ class UnifiedPretrainer:
         trainer = create_bc_trainer_from_config(self.config)
 
         # 创建并训练归一化器 - 与PPO训练保持一致
-        from ....utils.normalizers import RunningNormalizer
+        from src.core.utils.normalizers import RunningNormalizer
         normalizer = RunningNormalizer(eps=1e-6, clip=5.0)
 
         # 用所有状态数据训练归一化器

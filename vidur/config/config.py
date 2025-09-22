@@ -876,6 +876,104 @@ class PPOGlobalSchedulerModularConfig(PPOGlobalSchedulerOnlineConfig):
         metadata={"help": "Action distribution during stabilization (uniform, weighted)."},
     )
 
+    # NEW: Entropy schedule parameters (adaptive entropy for exploration-exploitation balance)
+    entropy_schedule_enable: bool = field(
+        default=False,
+        metadata={"help": "Enable adaptive entropy scheduling during training."},
+    )
+    entropy_initial: float = field(
+        default=0.02,
+        metadata={"help": "Initial entropy coefficient for entropy schedule."},
+    )
+    entropy_final: float = field(
+        default=0.0,
+        metadata={"help": "Final entropy coefficient for entropy schedule."},
+    )
+    entropy_decay_steps: int = field(
+        default=40000,
+        metadata={"help": "Number of steps for entropy decay from initial to final value."},
+    )
+
+    # NEW: Curriculum learning parameters (progressive difficulty training)
+    enable_curriculum_learning: bool = field(
+        default=False,
+        metadata={"help": "Enable curriculum learning with progressive difficulty stages."},
+    )
+    curriculum_stages_json: str = field(
+        default="[]",
+        metadata={"help": "JSON string containing curriculum learning stages configuration."},
+    )
+    curriculum_stages_json_base64: str = field(
+        default="",
+        metadata={"help": "Base64-encoded JSON string for curriculum learning stages (shell-safe)."},
+    )
+
+    # NEW: Tail latency monitoring parameters (performance tracking)
+    tail_latency_tracking_enable: bool = field(
+        default=True,
+        metadata={"help": "Enable tail latency monitoring and alerting."},
+    )
+    tail_latency_alert_threshold_p99: float = field(
+        default=5.0,
+        metadata={"help": "P99 latency threshold for alerts (seconds)."},
+    )
+    tail_latency_window_size: int = field(
+        default=1000,
+        metadata={"help": "Window size for tail latency statistics."},
+    )
+
+    # NEW: State builder enhanced features parameters (queue delay awareness)
+    enable_queue_delay_features: bool = field(
+        default=False,
+        metadata={"help": "Enable queue delay features in state builder for enhanced awareness."},
+    )
+    queue_delay_max_wait_time: float = field(
+        default=10.0,
+        metadata={"help": "Maximum wait time for queue delay normalization (seconds)."},
+    )
+    queue_delay_urgency_scale: float = field(
+        default=10.0,
+        metadata={"help": "Urgency scale factor for queue delay calculations."},
+    )
+    queue_delay_priority_weight: float = field(
+        default=1.0,
+        metadata={"help": "Priority weight for queue delay calculations."},
+    )
+
+    # NEW: Network architecture parameters (enhanced Actor-Critic configuration)
+    enable_cross_replica_attention: bool = field(
+        default=True,
+        metadata={"help": "Enable cross-replica attention mechanism for enhanced feature comparison."},
+    )
+    cross_replica_attention_heads: int = field(
+        default=4,
+        metadata={"help": "Number of attention heads for cross-replica attention."},
+    )
+    cross_replica_num_replicas: int = field(
+        default=4,
+        metadata={"help": "Number of replicas for cross-replica attention."},
+    )
+    actor_hidden_size: int = field(
+        default=320,
+        metadata={"help": "Hidden size for actor network."},
+    )
+    actor_gru_layers: int = field(
+        default=3,
+        metadata={"help": "Number of GRU layers for actor network."},
+    )
+    critic_hidden_size: int = field(
+        default=384,
+        metadata={"help": "Hidden size for critic network."},
+    )
+    critic_gru_layers: int = field(
+        default=3,
+        metadata={"help": "Number of GRU layers for critic network."},
+    )
+    enable_temperature_scaling: bool = field(
+        default=False,
+        metadata={"help": "Enable temperature scaling for action probability distribution."},
+    )
+
     @staticmethod
     def get_type():
         return GlobalSchedulerType.PPO_MODULAR

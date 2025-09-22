@@ -6,6 +6,7 @@
 """
 
 import pickle
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -15,8 +16,13 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
-from ....models.actor_critic import ActorCritic
-from ....utils.normalizers import RunningNormalizer
+# 确保可以导入项目模块
+repo_root = Path(__file__).resolve().parent.parent.parent.parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+
+from src.core.models.actor_critic import ActorCritic
+from src.core.utils.normalizers import RunningNormalizer
 
 
 class DemoDataset(Dataset):
@@ -117,6 +123,7 @@ class BehaviorCloningTrainer:
         }
 
         # 创建Actor-Critic网络
+        # 注意：对于预训练，我们禁用cross-replica attention以避免维度问题
         self.actor_critic = ActorCritic(
             state_dim=state_dim,
             action_dim=action_dim,
@@ -125,6 +132,9 @@ class BehaviorCloningTrainer:
             gru_layers=gru_layers,
             enable_decoupled=enable_decoupled,
             feature_projection_dim=feature_projection_dim,
+            enable_cross_replica_attention=False,  # 预训练时禁用，避免维度问题
+            num_replicas=4,
+            attention_heads=4,
         ).to(self.device)
 
         # 设置优化器 - 只训练Actor参数
@@ -346,15 +356,18 @@ class BehaviorCloningTrainer:
 
 def create_bc_trainer_from_config(config: Dict[str, Any]) -> BehaviorCloningTrainer:
     """从配置创建BC训练器"""
+    # 从network_architecture中读取参数
+    network_arch = config.get('network_architecture', {})
+
     return BehaviorCloningTrainer(
         state_dim=config['state_dim'],
         action_dim=config['action_dim'],
-        hidden_size=config.get('hidden_size', 128),
-        layer_N=config.get('layer_N', 2),
-        gru_layers=config.get('gru_layers', 2),
+        hidden_size=network_arch.get('hidden_size', config.get('hidden_size', 320)),  # 默认320与PPO一致
+        layer_N=config.get('layer_N', 3),  # 默认3层与PPO一致
+        gru_layers=network_arch.get('num_gru_layers', config.get('gru_layers', 3)),  # 默认3层与PPO一致
         enable_decoupled=config.get('enable_decoupled', False),
         feature_projection_dim=config.get('feature_projection_dim', None),
-        learning_rate=config.get('learning_rate', 1e-3),
+        learning_rate=config.get('learning_rate', 1e-4),
         device=config.get('device', 'cpu')
     )
 

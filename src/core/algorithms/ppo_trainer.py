@@ -29,6 +29,11 @@ class PPOTrainer:
         lr: float = 3e-4,
         clip_ratio: float = 0.2,
         entropy_coef: float = 0.01,
+        # NEW: Adaptive entropy scheduling parameters
+        entropy_schedule_enable: bool = False,
+        entropy_initial: float = 0.02,
+        entropy_final: float = 0.0,
+        entropy_decay_steps: int = 40000,
         value_coef: float = 0.5,
         epochs: int = 4,
         minibatch_size: int = 64,
@@ -65,6 +70,11 @@ class PPOTrainer:
         self.device = device
         self.clip_ratio = clip_ratio
         self.entropy_coef = entropy_coef
+        # NEW: Adaptive entropy scheduling
+        self.entropy_schedule_enable = entropy_schedule_enable
+        self.entropy_initial = entropy_initial
+        self.entropy_final = entropy_final
+        self.entropy_decay_steps = entropy_decay_steps
         self.value_coef = value_coef
         self.epochs = epochs
         self.minibatch_size = minibatch_size
@@ -115,14 +125,23 @@ class PPOTrainer:
 
     def get_current_entropy_coef(self) -> float:
         """
-        Get current entropy coefficient with warm-up boost.
+        Get current entropy coefficient with adaptive scheduling (PDF recommendation).
+
+        Supports both warmup boost and linear decay scheduling for better
+        exploration-exploitation balance.
 
         Returns:
             Current entropy coefficient
         """
-        base_coef = self.entropy_coef
+        # NEW: Adaptive entropy scheduling (PDF recommendation)
+        if self.entropy_schedule_enable:
+            # Linear decay from initial to final value
+            progress = min(1.0, self.current_step / self.entropy_decay_steps)
+            scheduled_coef = self.entropy_initial * (1 - progress) + self.entropy_final * progress
+            return scheduled_coef
 
-        # Add warm-up boost for early steps
+        # Original warmup logic (for backward compatibility)
+        base_coef = self.entropy_coef
         if self.current_step < self.warmup_steps:
             warmup_progress = self.current_step / self.warmup_steps
             warmup_boost = self.entropy_warmup_coef * (1 - warmup_progress)
