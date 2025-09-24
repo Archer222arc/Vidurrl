@@ -609,6 +609,22 @@ class PPOGlobalSchedulerOnlineConfig(DQNGlobalSchedulerOnlineConfig):
         default=0.5,
         metadata={"help": "Minimum entropy threshold to maintain exploration."},
     )
+    entropy_penalty_coef: float = field(
+        default=0.1,
+        metadata={"help": "Coefficient for entropy penalty when below minimum threshold."},
+    )
+    entropy_threshold_penalty_enable: bool = field(
+        default=False,
+        metadata={"help": "Enable entropy threshold penalty to prevent uniform distribution lock-in."},
+    )
+    entropy_threshold: float = field(
+        default=1.1,
+        metadata={"help": "Entropy threshold above which penalty is applied."},
+    )
+    entropy_threshold_penalty_coef: float = field(
+        default=0.05,
+        metadata={"help": "Coefficient for entropy threshold penalty."},
+    )
     kl_coef: float = field(
         default=0.2,
         metadata={"help": "Coefficient for KL regularization loss."},
@@ -845,6 +861,10 @@ class PPOGlobalSchedulerModularConfig(PPOGlobalSchedulerOnlineConfig):
         default=0.2,
         metadata={"help": "Sensitivity to latency pressure for temperature adjustment."},
     )
+    disable_temperature_pulse: bool = field(
+        default=False,
+        metadata={"help": "Disable temperature pulse system for exploration control."},
+    )
 
     # Statistics stabilization configuration
     enable_statistics_stabilization: bool = field(
@@ -972,6 +992,24 @@ class PPOGlobalSchedulerModularConfig(PPOGlobalSchedulerOnlineConfig):
     enable_temperature_scaling: bool = field(
         default=False,
         metadata={"help": "Enable temperature scaling for action probability distribution."},
+    )
+
+    # NEW: Temporal LSTM configuration (for enhanced state feature utilization)
+    enable_temporal_lstm: bool = field(
+        default=True,
+        metadata={"help": "Enable temporal LSTM for sequence pattern modeling between feature groups."},
+    )
+    temporal_lstm_feature_chunks: int = field(
+        default=4,
+        metadata={"help": "Number of feature chunks for temporal LSTM processing."},
+    )
+    temporal_lstm_bidirectional: bool = field(
+        default=True,
+        metadata={"help": "Use bidirectional LSTM for temporal feature modeling."},
+    )
+    temporal_lstm_hidden_ratio: float = field(
+        default=0.25,
+        metadata={"help": "Hidden size ratio for temporal LSTM (relative to main hidden size)."},
     )
 
     @staticmethod

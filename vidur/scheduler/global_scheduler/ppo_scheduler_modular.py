@@ -85,10 +85,10 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         self._max_grad_norm  = float(gcfg.max_grad_norm)
 
         # NEW: Entropy schedule parameters
-        self._entropy_schedule_enable = getattr(gcfg, 'entropy_schedule_enable', False)
-        self._entropy_initial = getattr(gcfg, 'entropy_initial', self._entropy_coef)
-        self._entropy_final = getattr(gcfg, 'entropy_final', 0.0)
-        self._entropy_decay_steps = getattr(gcfg, 'entropy_decay_steps', 40000)
+        self._entropy_schedule_enable = bool(gcfg.entropy_schedule_enable)
+        self._entropy_initial = float(gcfg.entropy_initial)
+        self._entropy_final = float(gcfg.entropy_final)
+        self._entropy_decay_steps = int(gcfg.entropy_decay_steps)
 
         # Reward calculation parameters - direct access
         self._reward_latency_weight   = float(gcfg.reward_latency_weight)
@@ -152,7 +152,17 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         # Enhanced exploration and regularization parameters
         self._target_kl = float(gcfg.target_kl)
         self._entropy_min = float(gcfg.entropy_min)
+        self._entropy_penalty_coef = float(gcfg.entropy_penalty_coef)
+        self._entropy_threshold_penalty_enable = bool(gcfg.entropy_threshold_penalty_enable)
+        self._entropy_threshold = float(gcfg.entropy_threshold)
+        self._entropy_threshold_penalty_coef = float(gcfg.entropy_threshold_penalty_coef)
         self._kl_coef = float(gcfg.kl_coef)
+
+        # Warmstart and KL reference parameters
+        self._kl_ref_coef_initial = float(gcfg.kl_ref_coef_initial)
+        self._kl_ref_coef_final = float(gcfg.kl_ref_coef_final)
+        self._kl_ref_decay_steps = int(gcfg.kl_ref_decay_steps)
+        self._warmup_steps = int(gcfg.warmup_steps)
 
         self._reward_calc = RewardCalculator(
             mode=self._reward_mode,
@@ -185,6 +195,7 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         self._max_temperature = float(gcfg.max_temperature)
         self._qps_sensitivity = float(gcfg.qps_sensitivity)
         self._latency_sensitivity = float(gcfg.latency_sensitivity)
+        self._disable_temperature_pulse = bool(gcfg.disable_temperature_pulse)
 
         self._temperature_controller = TemperatureController(
             base_temperature=self._base_temperature,
@@ -192,6 +203,7 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             max_temperature=self._max_temperature,
             qps_sensitivity=self._qps_sensitivity,
             latency_sensitivity=self._latency_sensitivity,
+            enable_pulse=not self._disable_temperature_pulse,
         ) if self._enable_dynamic_temperature else None
 
         # Determine state and action dimensions
@@ -216,6 +228,12 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         self._actor_hidden_size = int(gcfg.actor_hidden_size) if gcfg.actor_hidden_size > 0 else self._hidden_size
         self._actor_gru_layers = int(gcfg.actor_gru_layers) if gcfg.actor_gru_layers > 0 else self._gru_layers
         self._enable_temperature_scaling = bool(gcfg.enable_temperature_scaling)
+
+        # NEW: Temporal LSTM configuration
+        self._enable_temporal_lstm = getattr(gcfg, 'enable_temporal_lstm', True)
+        self._temporal_lstm_feature_chunks = getattr(gcfg, 'temporal_lstm_feature_chunks', 4)
+        self._temporal_lstm_bidirectional = getattr(gcfg, 'temporal_lstm_bidirectional', True)
+        self._temporal_lstm_hidden_ratio = getattr(gcfg, 'temporal_lstm_hidden_ratio', 0.25)
 
         # Initialize Enhanced Actor-Critic network with new architecture parameters
         self._ac = ActorCritic(
@@ -251,7 +269,16 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             device=self._device,
             target_kl=self._target_kl,
             entropy_min=self._entropy_min,
+            entropy_penalty_coef=self._entropy_penalty_coef,
+            entropy_threshold_penalty_enable=self._entropy_threshold_penalty_enable,
+            entropy_threshold=self._entropy_threshold,
+            entropy_threshold_penalty_coef=self._entropy_threshold_penalty_coef,
             kl_coef=self._kl_coef,
+            # Warmstart and KL reference parameters
+            kl_ref_coef_initial=self._kl_ref_coef_initial,
+            kl_ref_coef_final=self._kl_ref_coef_final,
+            kl_ref_decay_steps=self._kl_ref_decay_steps,
+            warmup_steps=self._warmup_steps,
         )
 
         # Initialize rollout buffer
@@ -721,6 +748,8 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             # Log curriculum learning metrics
             curriculum_info = self._curriculum_manager.get_stage_info()
             if curriculum_info["enabled"]:
+                # Get current curriculum parameters for logging (fix UnboundLocalError)
+                curriculum_params = self._curriculum_manager.get_current_parameters()
                 self._tb_monitor._log_scalar("curriculum/stage_index", curriculum_info["stage_index"], step=self._step)
                 self._tb_monitor._log_scalar("curriculum/stage_progress", curriculum_info["stage_progress"], step=self._step)
                 self._tb_monitor._log_scalar("curriculum/qps_scale", curriculum_params["qps_scale"], step=self._step)

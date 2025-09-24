@@ -41,6 +41,27 @@
       "fusion_type": "attention_weighted"
     }
   },
+  "cross_replica_attention": {
+    "enable": true,
+    "feature_dim": 320,
+    "num_heads": 4,
+    "dropout": 0.1,
+    "use_layer_norm": true,
+    "dimension_handling": {
+      "enable_adaptive_projection": true,
+      "minimum_feature_dim": 64,
+      "ensure_head_divisibility": true
+    },
+    "comment": "Cross-replica attention to match PPO architecture"
+  },
+  "temporal_lstm": {
+    "enable": true,
+    "feature_chunks": 4,
+    "bidirectional": true,
+    "hidden_size_ratio": 0.25,
+    "residual_connections": true,
+    "comment": "Temporal LSTM for sequence modeling to match PPO architecture"
+  },
   "regularization": {
     "gradient_clip_norm": 1.0,
     "label_smoothing": 0.1,

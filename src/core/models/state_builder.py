@@ -226,9 +226,18 @@ class StateBuilder:
         arrived_at = float(oldest_request.arrived_at)
         wait_time = max(0.0, float(current_time) - arrived_at)
 
-        # Normalize to [0, 1] range assuming 10 seconds is "very long wait"
-        normalized_wait = min(wait_time / 10.0, 1.0)
-        return normalized_wait
+        # IMPROVED: Use adaptive normalization with softer scaling
+        # Log scaling to better distinguish short vs medium wait times
+        if wait_time <= 0.1:
+            normalized_wait = wait_time * 10.0  # Linear scaling for very short waits
+        else:
+            # Log scaling for longer waits: log(1 + wait_time) / log(1 + max_time)
+            max_expected_wait = self.queue_delay_normalization["max_wait_time_seconds"]
+            normalized_wait = min(
+                np.log(1.0 + wait_time) / np.log(1.0 + max_expected_wait),
+                1.0
+            )
+        return float(normalized_wait)
 
     def _get_average_queue_wait_time(self, request_queue: List[Request], current_time: float) -> float:
         """
@@ -253,9 +262,19 @@ class StateBuilder:
             return 0.0
 
         avg_wait = total_wait / valid_requests
-        # Normalize to [0, 1] range
-        normalized_avg_wait = min(avg_wait / 10.0, 1.0)
-        return normalized_avg_wait
+
+        # IMPROVED: More sensitive normalization for average wait times
+        # Use square root scaling to better distinguish moderate differences
+        max_expected_wait = self.queue_delay_normalization["max_wait_time_seconds"]
+        if avg_wait <= 0.1:
+            normalized_avg_wait = avg_wait * 10.0  # Linear for very short
+        else:
+            # Square root scaling for better sensitivity in mid-range
+            normalized_avg_wait = min(
+                np.sqrt(avg_wait) / np.sqrt(max_expected_wait),
+                1.0
+            )
+        return float(normalized_avg_wait)
 
     def _compute_queue_urgency(self, request_queue: List[Request], current_time: float) -> float:
         """

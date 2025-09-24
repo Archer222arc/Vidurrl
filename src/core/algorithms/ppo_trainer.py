@@ -41,6 +41,10 @@ class PPOTrainer:
         device: str = "cpu",
         target_kl: float = 0.01,
         entropy_min: float = 0.5,
+        entropy_penalty_coef: float = 0.1,
+        entropy_threshold_penalty_enable: bool = False,
+        entropy_threshold: float = 1.1,
+        entropy_threshold_penalty_coef: float = 0.05,
         kl_coef: float = 0.2,
         # Warm start and KL regularization parameters
         kl_ref_coef_initial: float = 0.5,
@@ -81,6 +85,10 @@ class PPOTrainer:
         self.max_grad_norm = max_grad_norm
         self.target_kl = target_kl
         self.entropy_min = entropy_min
+        self.entropy_penalty_coef = entropy_penalty_coef
+        self.entropy_threshold_penalty_enable = entropy_threshold_penalty_enable
+        self.entropy_threshold = entropy_threshold
+        self.entropy_threshold_penalty_coef = entropy_threshold_penalty_coef
         self.kl_coef = kl_coef
 
         # Warm start and KL regularization parameters
@@ -268,7 +276,12 @@ class PPOTrainer:
                 # Additional penalty if entropy drops below minimum
                 entropy_penalty = 0.0
                 if entropy.item() < self.entropy_min:
-                    entropy_penalty = 0.1 * (self.entropy_min - entropy.item())
+                    entropy_penalty = self.entropy_penalty_coef * (self.entropy_min - entropy.item())
+
+                # Additional penalty if entropy exceeds threshold (prevents uniform distribution lock-in)
+                entropy_threshold_penalty = 0.0
+                if self.entropy_threshold_penalty_enable and entropy.item() > self.entropy_threshold:
+                    entropy_threshold_penalty = self.entropy_threshold_penalty_coef * (entropy.item() - self.entropy_threshold)
 
                 # KL regularization w.r.t. reference policy
                 kl_ref_coef = self.get_current_kl_ref_coef()
@@ -278,7 +291,7 @@ class PPOTrainer:
 
                 # Total loss with enhanced regularization
                 loss = (pi_loss + self.value_coef * vf_loss + kl_penalty + kl_ref_loss
-                       - entropy_bonus + entropy_penalty)
+                       - entropy_bonus + entropy_penalty + entropy_threshold_penalty)
 
                 # Update current step for warm-up and KL decay
                 self.current_step += 1

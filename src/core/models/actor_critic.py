@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Categorical
+from .exploration_bonus import StabilizedCategorical
 
 
 def init_layer(layer: nn.Module, gain: float = 1.0, use_orthogonal: bool = True) -> None:
@@ -184,14 +185,26 @@ class ActorCritic(nn.Module):
 
         # NEW: Cross-replica attention mechanism (PDF recommendation)
         if self.enable_cross_replica_attention:
-            # Calculate the correct feature dimension per replica
-            replica_feature_dim = hidden_size // num_replicas
+            # Calculate the correct feature dimension per replica from state dimension
+            # State structure: num_replicas * (base_features + enhanced_features + request_features) + global_features
+            # From config: state_dim=210, num_replicas=4, so replica_features = (210-10)/4 = 50 per replica
+            replica_feature_dim = max(hidden_size // 4, 64)  # Ensure minimum viable dimension
+
+            # Ensure replica_feature_dim is divisible by attention_heads
+            while replica_feature_dim % attention_heads != 0:
+                replica_feature_dim += 1
+
+            self.replica_feature_dim = replica_feature_dim
             self.cross_replica_attention = CrossReplicaAttention(
                 feature_dim=replica_feature_dim,
                 num_heads=attention_heads,
                 dropout=0.1,
                 use_layer_norm=True
             )
+
+            # Add projection layer to convert from hidden_size to replica features
+            self.replica_projection = nn.Linear(hidden_size, num_replicas * replica_feature_dim)
+            init_layer(self.replica_projection, gain=1.0, use_orthogonal=True)
 
         # Compressed shared MLP (only 1 layer when decoupled)
         if enable_decoupled:
@@ -230,6 +243,33 @@ class ActorCritic(nn.Module):
             elif "bias" in name:
                 nn.init.constant_(param, 0.0)
         self.gru_ln = nn.LayerNorm(hidden_size)
+
+        # NEW: Modular Temporal LSTM component (configuration-controlled)
+        from .components import TemporalLSTMFactory
+
+        # Create temporal LSTM component from configuration
+        # This replaces the hardcoded enable_decoupled dependency
+        temporal_config_dict = {
+            "enable": enable_decoupled,  # For now, keep the same logic for compatibility
+            "feature_chunks": 4,
+            "hidden_size_ratio": 0.25,
+            "bidirectional": True,
+            "residual_connections": True
+        }
+
+        self.temporal_lstm_component = TemporalLSTMFactory.from_dict(
+            temporal_config_dict, hidden_size
+        )
+
+        # Backward compatibility: store enable flag and dimensions
+        self.enable_temporal_lstm = self.temporal_lstm_component.config.enable
+        if self.enable_temporal_lstm:
+            self.feature_chunks = self.temporal_lstm_component.feature_chunks
+            self.lstm_input_size = self.temporal_lstm_component.chunk_size
+            self.lstm_hidden_size = self.temporal_lstm_component.lstm_hidden_size
+
+            self.temporal_projection = nn.Linear(hidden_size, hidden_size)
+            init_layer(self.temporal_projection, gain=1.0, use_orthogonal=use_orthogonal)
 
         # Decoupled Actor and Critic branches
         if enable_decoupled:
@@ -284,6 +324,9 @@ class ActorCritic(nn.Module):
             init_layer(self.actor, gain=0.01, use_orthogonal=use_orthogonal)
             init_layer(self.critic, gain=1.0, use_orthogonal=use_orthogonal)
 
+        # Add stabilized categorical distribution for better exploration
+        self.stabilized_dist = StabilizedCategorical(num_actions=action_dim)
+
     def forward_mlp(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass through feature projection, cross-replica attention, and shared MLP.
@@ -296,36 +339,45 @@ class ActorCritic(nn.Module):
         """
         # Feature projection for multi-scale normalization
         x = self.feature_proj(x)
+        original_x = x  # Store for residual connection
 
         # NEW: Cross-replica attention mechanism (PDF recommendation)
         if self.enable_cross_replica_attention:
             batch_size = x.shape[0]
-            # Calculate the correct feature dimension per replica after projection
-            replica_feature_dim = self.hidden_size // self.num_replicas
 
-            # Always project to hidden_size first, then split by replicas
-            if x.shape[1] == self.hidden_size:
-                # Already projected to hidden_size, split by replicas
-                x_replicas = x.view(batch_size, self.num_replicas, replica_feature_dim)
-            else:
-                # First project entire state to hidden_size, then split by replicas
-                # This avoids the dimension mismatch when state_dim is not divisible by num_replicas
-                x_projected = x  # x is already projected by feature_proj above
-                x_replicas = x_projected.view(batch_size, self.num_replicas, replica_feature_dim)
+            # Project to replica feature space
+            x_replica_proj = self.replica_projection(x)  # (B, num_replicas * replica_feature_dim)
+            x_replicas = x_replica_proj.view(batch_size, self.num_replicas, self.replica_feature_dim)
 
             # Apply cross-replica attention
-            x_attended = self.cross_replica_attention(x_replicas)  # (B, N, D)
+            x_attended = self.cross_replica_attention(x_replicas)  # (B, N, replica_feature_dim)
 
-            # Flatten back to (batch_size, hidden_size)
-            # Option 1: Reshape to original hidden_size by concatenating replicas and projecting
-            # Option 2: Mean pooling and then project back to hidden_size
-            # We choose Option 1 for better information preservation
-            x_flattened = x_attended.view(batch_size, -1)  # (B, N*D) = (B, num_replicas * replica_feature_dim) = (B, hidden_size)
-            x = x_flattened  # Already the right size: hidden_size
+            # Flatten and project back to hidden_size
+            x_flattened = x_attended.view(batch_size, -1)  # (B, num_replicas * replica_feature_dim)
+
+            # Project back to hidden_size if needed
+            if x_flattened.shape[1] != self.hidden_size:
+                if not hasattr(self, 'replica_back_projection'):
+                    self.replica_back_projection = nn.Linear(
+                        self.num_replicas * self.replica_feature_dim,
+                        self.hidden_size
+                    )
+                    init_layer(self.replica_back_projection, gain=1.0, use_orthogonal=True)
+                x_attention = self.replica_back_projection(x_flattened)
+            else:
+                x_attention = x_flattened
+
+            # Add residual connection with original features
+            x = x_attention + original_x
 
         if self.enable_decoupled:
             # Minimal shared processing
             x = self.shared_mlp(x)
+
+            # NEW: Apply modular temporal LSTM component
+            if self.enable_temporal_lstm:
+                # Use the modular component instead of inline processing
+                x = self.temporal_lstm_component(x)
         else:
             # Original MLP processing
             x = self.shared_mlp(x)
@@ -333,6 +385,46 @@ class ActorCritic(nn.Module):
             for i in range(self.layer_N):
                 x = F.relu(self.mlp_ln[i](self.mlp_h[i](x)))
         return x
+
+    def forward(self, x: torch.Tensor, hxs: torch.Tensor = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Standard forward pass for compatibility.
+
+        Args:
+            x: Input state tensor
+            hxs: Hidden state (optional)
+
+        Returns:
+            Tuple of (action_logits, value, new_hidden_state)
+        """
+        batch_size = x.shape[0]
+
+        # Use zero hidden state if not provided
+        if hxs is None:
+            hxs = torch.zeros(self.gru_layers, batch_size, self.hidden_size, device=x.device)
+
+        # Create dummy masks (all ones)
+        masks = torch.ones(batch_size, device=x.device)
+
+        # Forward through MLP
+        z = self.forward_mlp(x)
+
+        # Forward through GRU
+        z_shared, new_hxs = self.forward_gru(z, hxs, masks)
+
+        if self.enable_decoupled:
+            # Decoupled architecture
+            z_actor = self.actor_branch(z_shared)
+            logits = self.actor_head(z_actor)
+
+            z_critic = self.critic_branch(z_shared)
+            value = self.critic_head(z_critic).squeeze(-1)
+        else:
+            # Shared architecture
+            logits = self.actor(z_shared)
+            value = self.critic(z_shared).squeeze(-1)
+
+        return logits, value, new_hxs
 
     def forward_gru(
         self, x: torch.Tensor, hxs: torch.Tensor, masks: torch.Tensor
@@ -409,13 +501,8 @@ class ActorCritic(nn.Module):
             logits = self.actor(z)
             v = self.critic(z).squeeze(-1)
 
-        # Apply temperature scaling to logits
-        if temperature != 1.0:
-            logits = logits / temperature
-
-        dist = Categorical(logits=logits)
-        a = dist.sample()
-        logp = dist.log_prob(a)
+        # Use stabilized categorical distribution with exploration bonuses
+        a, logp, entropy = self.stabilized_dist(logits, temperature=temperature)
         return a, logp, v, updated_hxs
 
     def evaluate_actions(
@@ -467,10 +554,9 @@ class ActorCritic(nn.Module):
             logits = self.actor(z)
             v = self.critic(z).squeeze(-1)
 
-        dist = Categorical(logits=logits)
-        logp = dist.log_prob(a)
-        entropy = dist.entropy().mean()
-        return logp, entropy, v, updated_hxs
+        # Use stabilized categorical distribution for evaluation
+        _, logp, entropy = self.stabilized_dist(logits, action=a, temperature=1.0)
+        return logp, entropy.mean(), v, updated_hxs
 
     def forward_actor_logits(
         self, s: torch.Tensor, hxs: torch.Tensor, masks: torch.Tensor

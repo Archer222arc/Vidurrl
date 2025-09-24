@@ -123,6 +123,19 @@ def build_ppo_args(config: Dict, output_dir: str) -> List[str]:
             if "gru_layers" in critic_cfg:
                 args.extend([f"{ppo_prefix}critic_gru_layers", str(critic_cfg["gru_layers"])])
 
+        # Temporal LSTM configuration
+        if "temporal_lstm" in network_cfg:
+            temporal_cfg = network_cfg["temporal_lstm"]
+            if temporal_cfg.get("enable", False):
+                args.append(f"{ppo_prefix}enable_temporal_lstm")
+                args.extend([
+                    f"{ppo_prefix}temporal_lstm_feature_chunks", str(temporal_cfg.get("feature_chunks", 4)),
+                    f"{ppo_prefix}temporal_lstm_hidden_ratio", str(temporal_cfg.get("hidden_size_ratio", 0.25))
+                ])
+                # Bidirectional is True by default, only add flag if it's True (which it is)
+                if temporal_cfg.get("bidirectional", True):
+                    args.append(f"{ppo_prefix}temporal_lstm_bidirectional")
+
     # Reward configuration
     reward_cfg = config["reward_config"]
     args.extend([
@@ -135,8 +148,11 @@ def build_ppo_args(config: Dict, output_dir: str) -> List[str]:
         f"{ppo_prefix}absolute_weight", str(reward_cfg["absolute_weight"]),
         f"{ppo_prefix}delta_weight", str(reward_cfg["delta_weight"]),
         f"{ppo_prefix}alpha", str(reward_cfg["alpha"]),
+        f"{ppo_prefix}beta", str(reward_cfg.get("beta", 0.4)),
+        f"{ppo_prefix}gamma", str(reward_cfg.get("gamma", 0.3)),
         f"{ppo_prefix}kappa", str(reward_cfg["kappa"]),
-        f"{ppo_prefix}sigma", str(reward_cfg["sigma"])
+        f"{ppo_prefix}sigma", str(reward_cfg["sigma"]),
+        f"{ppo_prefix}ema_alpha", str(reward_cfg.get("ema_alpha", 0.1))
     ])
 
     # KL regularization
@@ -144,12 +160,22 @@ def build_ppo_args(config: Dict, output_dir: str) -> List[str]:
     args.extend([
         f"{ppo_prefix}target_kl", str(kl_cfg["target_kl"]),
         f"{ppo_prefix}entropy_min", str(kl_cfg["entropy_min"]),
+        f"{ppo_prefix}entropy_penalty_coef", str(kl_cfg["entropy_penalty_coef"]),
         f"{ppo_prefix}kl_coef", str(kl_cfg["kl_coef"]),
         f"{ppo_prefix}kl_ref_coef_initial", str(kl_cfg["kl_ref_coef_initial"]),
         f"{ppo_prefix}kl_ref_coef_final", str(kl_cfg["kl_ref_coef_final"]),
         f"{ppo_prefix}kl_ref_decay_steps", str(kl_cfg["kl_ref_decay_steps"]),
         f"{ppo_prefix}warmup_steps", str(kl_cfg["warmup_steps"])
     ])
+
+    # Entropy threshold penalty (NEW)
+    if "entropy_threshold_penalty" in kl_cfg and kl_cfg["entropy_threshold_penalty"]["enable"]:
+        entropy_threshold_cfg = kl_cfg["entropy_threshold_penalty"]
+        args.extend([
+            f"{ppo_prefix}entropy_threshold_penalty_enable",
+            f"{ppo_prefix}entropy_threshold", str(entropy_threshold_cfg["threshold"]),
+            f"{ppo_prefix}entropy_threshold_penalty_coef", str(entropy_threshold_cfg["penalty_coef"])
+        ])
 
     # Temperature control
     temp_cfg = config["temperature_control"]
@@ -160,6 +186,14 @@ def build_ppo_args(config: Dict, output_dir: str) -> List[str]:
         f"{ppo_prefix}qps_sensitivity", str(temp_cfg["qps_sensitivity"]),
         f"{ppo_prefix}latency_sensitivity", str(temp_cfg["latency_sensitivity"])
     ])
+
+    # Temperature pulse control (NEW)
+    if "temperature_pulse" in temp_cfg:
+        if temp_cfg["temperature_pulse"]["enable"]:
+            # Temperature pulse is enabled by default, no need to pass extra args
+            pass
+        else:
+            args.append(f"{ppo_prefix}disable_temperature_pulse")
 
     # Enhanced features
     if config["enhanced_features"]["enable_enhanced_features"]:

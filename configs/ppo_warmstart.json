@@ -65,72 +65,111 @@
       "num_heads": 4,
       "dropout": 0.1,
       "use_layer_norm": true,
-      "comment": "NEW: Cross-replica attention for explicit replica comparison"
+      "dimension_handling": {
+        "enable_adaptive_projection": true,
+        "minimum_feature_dim": 64,
+        "ensure_head_divisibility": true
+      },
+      "comment": "IMPROVED: Cross-replica attention with fixed dimension handling and proper projections"
+    },
+    "temporal_lstm": {
+      "enable": true,
+      "feature_chunks": 4,
+      "bidirectional": true,
+      "hidden_size_ratio": 0.25,
+      "residual_connections": true,
+      "comment": "NEW: Temporal LSTM for sequence pattern modeling between feature groups"
     }
   },
   "ppo_config": {
-    "lr": 0.0003,
+    "lr": 0.01,
     "gamma": 0.95,
     "gae_lambda": 0.95,
     "clip_ratio": 0.15,
     "epochs": 8,
     "rollout_len": 128,
     "minibatch_size": 64,
-    "entropy_coef": 0.02,
+    "entropy_coef": 0.001,
     "entropy_schedule": {
       "enable": true,
-      "initial": 0.02,
-      "final": 0.0,
-      "decay_steps": 40000,
+      "initial": 0.005,
+      "final": 0.0005,
+      "decay_steps": 10000,
       "decay_type": "linear"
     },
-    "entropy_warmup_coef": 0.01,
+    "entropy_warmup_coef": 0.005,
     "stabilization_steps": 100,
     "max_grad_norm": 1.0
   },
   "reward_config": {
-    "latency_weight": 1.5,
-    "balance_penalty_weight": 0.2,
+    "latency_weight": 1.0,
+    "balance_penalty_weight": 0.6,
     "latency_threshold": 4.0,
-    "latency_penalty_scale": 0.75,
+    "latency_penalty_scale": 1.5,
     "load_balance_penalty": 1.2,
-    "throughput_target": 2.0,
+    "throughput_target": 3.3,
     "absolute_weight": 0.6,
-    "delta_weight": 0.4,
-    "alpha": 0.4,
-    "beta": 0.4,
-    "gamma": 0.3,
-    "kappa": 0.25,
-    "sigma": 1.2,
-    "ema_alpha": 0.15,
+    "delta_weight": 0.45,
+    "alpha": 0.8,
+    "beta": 0.0,
+    "gamma": 0.6,
+    "kappa": 0.7,
+    "sigma": 1.0,
+    "ema_alpha": 0.2,
     "reward_scaling": {
       "type": "adaptive",
-      "scale_factor": 1.0,
-      "clip_range": [-8.0, 8.0],
+      "scale_factor": 0.8,
+      "clip_range": [-10.0, 10.0],
       "enable_soft_clipping": true,
-      "soft_clip_threshold": 6.0,
-      "comment": "IMPROVED: Expanded range and soft clipping to prevent reward saturation while maintaining gradients"
+      "soft_clip_threshold": 8.0,
+      "comment": "REBALANCED: Expanded range to prevent reward saturation and enable baseline outperformance"
     },
     "latency_bonus": {
       "enable": true,
-      "threshold_fraction": 0.8,
-      "bonus_scale": 0.5,
-      "comment": "NEW: Bonus reward for achieving latency significantly below SLO"
+      "threshold_fraction": 0.75,
+      "bonus_scale": 1.0,
+      "comment": "ENHANCED: Stronger bonus for latency improvements to provide positive signals"
+    },
+    "baseline_relative_reward": {
+      "enable": true,
+      "baseline_type": "random",
+      "relative_scale": 0.5,
+      "comment": "NEW: Relative reward against baseline to avoid negative reward dead zones"
+    },
+    "progressive_latency_reward": {
+      "enable": true,
+      "improvement_bonus": 0.3,
+      "degradation_penalty": 0.1,
+      "smoothing_window": 5,
+      "comment": "NEW: Progressive rewards for latency improvements to amplify improvement signals"
+    },
+    "reward_validation": {
+      "verify_bounds": true,
+      "log_gradient_saturation": true,
+      "alert_on_reward_ceiling": true,
+      "comment": "NEW: Validation to ensure reward bounds are correctly set"
     }
   },
   "kl_regularization": {
-    "target_kl": 0.1,
+    "target_kl": 0.02,
     "adaptive_kl": {
       "enable": true,
-      "min_target": 0.05,
-      "max_target": 0.2,
-      "adaptation_rate": 0.02
+      "min_target": 0.015,
+      "max_target": 0.04,
+      "adaptation_rate": 0.015
     },
-    "entropy_min": 0.2,
+    "entropy_min": 0.002,
+    "entropy_penalty_coef": 0.1,
+    "entropy_threshold_penalty": {
+      "enable": true,
+      "threshold": 0.25,
+      "penalty_coef": 2.0,
+      "comment": "STRONG penalty for entropy above 0.25 to force convergence (max_entropy=1.386 for 4 actions, 0.25 = 18%)"
+    },
     "kl_coef": 0.2,
-    "kl_ref_coef_initial": 0.6,
-    "kl_ref_coef_final": 0.1,
-    "kl_ref_decay_steps": 3000,
+    "kl_ref_coef_initial": 0.2,
+    "kl_ref_coef_final": 0.0,
+    "kl_ref_decay_steps": 1500,
     "warmup_steps": 1500,
     "early_stopping": {
       "enable": true,
@@ -151,12 +190,20 @@
   },
   "temperature_control": {
     "enable_dynamic_temperature": true,
-    "base_temperature": 1.5,
-    "min_temperature": 0.8,
-    "max_temperature": 3.0,
-    "qps_sensitivity": 0.05,
-    "latency_sensitivity": 0.1,
-    "adaptive_schedule": true
+    "base_temperature": 1.2,
+    "min_temperature": 1.1,
+    "max_temperature": 2.0,
+    "qps_sensitivity": 0.12,
+    "latency_sensitivity": 0.2,
+    "adaptive_schedule": true,
+    "temperature_pulse": {
+      "enable": true,
+      "stagnation_threshold": 0.005,
+      "stagnation_window": 8,
+      "pulse_magnitude": 1.8,
+      "pulse_duration": 5,
+      "comment": "Enabled pulses with stronger exploration boost"
+    }
   },
   "enhanced_features": {
     "enable_enhanced_features": true,
@@ -186,7 +233,13 @@
       "avg_queue_wait_time",
       "queue_urgency_score"
     ],
-    "comment": "NEW: Enhanced state features for queue delay awareness (PDF recommendation)"
+    "normalization_improvements": {
+      "enable_adaptive_scaling": true,
+      "use_log_scaling_for_wait_times": true,
+      "use_sqrt_scaling_for_averages": true,
+      "comment": "IMPROVED: Enhanced normalization with log/sqrt scaling for better feature sensitivity"
+    },
+    "comment": "ENHANCED: Improved state features with better normalization for queue delay awareness"
   },
   "curriculum_learning": {
     "enable": true,

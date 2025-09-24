@@ -66,6 +66,7 @@ class MetricsExporter:
         self.current_file: Optional[str] = None
         self.csv_writer: Optional[csv.DictWriter] = None
         self.csv_file_handle = None
+        self.csv_fieldnames: set = set()  # Track all fieldnames seen so far
 
         # Validation
         if self.enabled:
@@ -239,24 +240,96 @@ class MetricsExporter:
             print(f"❌ 指标导出失败: {e}")
 
     def _flush_csv(self) -> None:
-        """Flush data to CSV file."""
+        """Flush data to CSV file with dynamic schema handling."""
         if not self.buffer:
             return
 
-        # Get all unique fieldnames from buffer
-        all_fieldnames = set()
+        # Get all unique fieldnames from current buffer
+        buffer_fieldnames = set()
         for row in self.buffer:
-            all_fieldnames.update(row.keys())
-        fieldnames = sorted(all_fieldnames)
+            buffer_fieldnames.update(row.keys())
 
         # Generate filename if needed
         if not self.current_file:
             self.current_file = self.export_path / self._generate_filename()
 
-        # Check if we need to write header
-        write_header = not self.current_file.exists()
+        file_exists = self.current_file.exists()
 
-        # Open file and write data
+        # Check if we have new fields that require schema evolution
+        new_fields = buffer_fieldnames - self.csv_fieldnames
+        needs_schema_update = bool(new_fields) and file_exists
+
+        if needs_schema_update:
+            # Handle schema evolution by rewriting the file with new headers
+            self._handle_csv_schema_evolution(buffer_fieldnames)
+        else:
+            # Normal append mode
+            self._append_csv_data(buffer_fieldnames, not file_exists)
+
+        # Update our known fieldnames
+        self.csv_fieldnames.update(buffer_fieldnames)
+
+    def _handle_csv_schema_evolution(self, new_fieldnames: set) -> None:
+        """Handle CSV schema evolution by rewriting file with expanded headers."""
+        if not self.current_file.exists():
+            return
+
+        print(f"🔄 检测到新的CSV字段，正在更新架构: {new_fieldnames - self.csv_fieldnames}")
+
+        # Read existing data
+        existing_data = []
+        try:
+            with open(self.current_file, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                existing_data = list(reader)
+        except Exception as e:
+            print(f"⚠️  读取现有CSV数据时出错: {e}")
+            return
+
+        # Combine all fieldnames (existing + new)
+        all_fieldnames = self.csv_fieldnames.union(new_fieldnames)
+        fieldnames = sorted(all_fieldnames)
+
+        # Create backup
+        backup_path = self.current_file.with_suffix('.csv.backup')
+        try:
+            self.current_file.rename(backup_path)
+        except Exception as e:
+            print(f"⚠️  创建备份失败: {e}")
+
+        # Rewrite file with expanded schema
+        try:
+            with open(self.current_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+
+                # Write existing data with expanded schema
+                for row in existing_data:
+                    complete_row = {field: row.get(field, None) for field in fieldnames}
+                    writer.writerow(complete_row)
+
+                # Write new buffer data
+                for row in self.buffer:
+                    complete_row = {field: row.get(field, None) for field in fieldnames}
+                    writer.writerow(complete_row)
+
+            print(f"✅ CSV架构已更新，新增 {len(new_fieldnames - self.csv_fieldnames)} 个字段")
+
+            # Remove backup if successful
+            if backup_path.exists():
+                backup_path.unlink()
+
+        except Exception as e:
+            print(f"❌ CSV架构更新失败: {e}")
+            # Restore backup if update failed
+            if backup_path.exists():
+                backup_path.rename(self.current_file)
+                print("🔄 已恢复备份文件")
+
+    def _append_csv_data(self, fieldnames_set: set, write_header: bool) -> None:
+        """Append data to CSV file in normal mode."""
+        fieldnames = sorted(fieldnames_set)
+
         with open(self.current_file, 'a', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
 
@@ -265,7 +338,7 @@ class MetricsExporter:
 
             for row in self.buffer:
                 # Fill missing keys with None
-                complete_row = {field: row.get(field) for field in fieldnames}
+                complete_row = {field: row.get(field, None) for field in fieldnames}
                 writer.writerow(complete_row)
 
     def _flush_parquet(self) -> None:
@@ -323,6 +396,9 @@ class MetricsExporter:
             if self.csv_file_handle:
                 self.csv_file_handle.close()
                 self.csv_file_handle = None
+
+            # Clear fieldnames tracking
+            self.csv_fieldnames.clear()
 
             print(f"📊 指标导出已关闭: 总计 {self.flush_count} 次写入")
 

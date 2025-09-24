@@ -72,34 +72,47 @@
       "description": "完全优化，标准PPO学习率"
     }
   },
-  "state_dimension_mismatch_solution": {
-    "problem_description": "预训练使用固定14维状态，PPO使用动态198维状态(4副本)",
-    "solution_strategy": "hierarchical_feature_fusion",
-    "architecture_design": {
-      "stage_1_core_extraction": {
-        "input": "198维PPO状态 (num_replicas * 47 + 10)",
-        "output": "14维核心特征 (与预训练兼容)",
-        "method": "注意力池化 + 可学习压缩",
-        "purpose": "提取与预训练状态等价的核心调度信息"
-      },
-      "stage_2_feature_fusion": {
-        "core_features": "14维 (继承预训练权重)",
-        "enhanced_features": "184维 (198-14, PPO特有的详细状态)",
-        "fusion_output": "320维 (Actor/Critic输入)",
-        "method": "加权拼接 + 特征投影"
-      },
-      "stage_3_knowledge_transfer": {
-        "pretrained_component": "基于14维核心特征的策略网络",
-        "target_component": "PPO Actor网络的核心部分",
-        "transfer_method": "直接复制权重到融合层的核心分支"
-      }
+  "state_dimension_compatibility": {
+    "pretrain_state_dim": 210,
+    "ppo_state_dim": 210,
+    "status": "ENHANCED - Perfect match with queue delay features",
+    "comment": "Both pretrain and PPO now use 210-dimensional state vectors with enhanced queue delay features",
+    "state_formula": "num_replicas * (14+8+28) + 10 = 4 * 50 + 10 = 210 (queue delay in base 14)",
+    "new_features": ["oldest_request_wait_time", "avg_queue_wait_time", "queue_urgency_score"],
+    "direct_transfer": true,
+    "requires_adaptation": false
+  },
+  "enhanced_architecture_features": {
+    "cross_replica_attention": {
+      "enable": true,
+      "feature_dim": 320,
+      "num_heads": 4,
+      "dropout": 0.1,
+      "use_layer_norm": true,
+      "pretrain_compatibility": "FULL_SUPPORT",
+      "comment": "Cross-replica attention supported in both pretrain and PPO"
+    },
+    "temporal_lstm": {
+      "enable": true,
+      "feature_chunks": 4,
+      "bidirectional": true,
+      "hidden_size_ratio": 0.25,
+      "pretrain_compatibility": "FULL_SUPPORT",
+      "comment": "Temporal LSTM for sequence modeling in both pretrain and PPO"
+    },
+    "enhanced_normalization": {
+      "enable_adaptive_scaling": true,
+      "use_log_scaling_for_wait_times": true,
+      "use_sqrt_scaling_for_averages": true,
+      "pretrain_compatibility": "FULL_SUPPORT",
+      "comment": "Enhanced state normalization with log/sqrt scaling"
     }
   },
   "architecture_validation": {
     "required_dimensions": {
-      "pretrain_state_dim": 198,
-      "ppo_state_dim": 198,
-      "dimension_compatibility": "PERFECT_MATCH",
+      "pretrain_state_dim": 210,
+      "ppo_state_dim": 210,
+      "dimension_compatibility": "PERFECT_MATCH_ENHANCED",
       "action_dim": 4,
       "pretrain_hidden_size": 320,
       "ppo_actor_hidden_size": 320,
@@ -115,12 +128,22 @@
       "attention_heads": {
         "pretrain": 4,
         "ppo": 4,
-        "head_dimension": 80
+        "head_dimension": 80,
+        "cross_replica_attention": "FULLY_COMPATIBLE"
       },
-      "dimension_adaptation": {
-        "core_extractor_layers": 2,
-        "fusion_layers": 3,
-        "projection_layers": 1
+      "temporal_lstm": {
+        "pretrain": "enabled",
+        "ppo": "enabled",
+        "feature_chunks": 4,
+        "bidirectional": true,
+        "hidden_size_ratio": 0.25,
+        "compatibility_status": "MATCHED - Direct architecture transfer"
+      },
+      "enhanced_features": {
+        "state_normalization": "adaptive_scaling",
+        "queue_delay_features": "enabled",
+        "cross_replica_comparison": "attention_based",
+        "temporal_modeling": "bidirectional_lstm"
       }
     }
   },

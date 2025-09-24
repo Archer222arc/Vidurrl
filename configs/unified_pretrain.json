@@ -1,8 +1,9 @@
 {
   "training_mode": "enhanced",
-  "state_dim": 198,
+  "state_dim": 210,
   "action_dim": 4,
-  "hidden_size": 256,
+  "comment": "UPDATED: Increased from 198 to 210 to match enhanced StateBuilder with queue delay features",
+  "hidden_size": 320,
   "layer_N": 3,
   "gru_layers": 3,
   "learning_rate": 1e-4,
@@ -16,5 +17,69 @@
   "output_dir": "./outputs/unified_pretrain",
   "augment_data": true,
   "noise_std": 0.01,
-  "use_tensorboard": true
+  "use_tensorboard": true,
+  "network_architecture": {
+    "type": "enhanced_gru",
+    "hidden_size": 320,
+    "num_gru_layers": 3,
+    "dropout_rate": 0.1,
+    "use_layer_norm": true,
+    "use_residual": true,
+    "activation": "gelu",
+    "enable_cross_replica_attention": true,
+    "num_replicas": 4,
+    "attention_heads": 4
+  },
+  "cross_replica_attention": {
+    "enable": true,
+    "feature_dim": 320,
+    "num_heads": 4,
+    "dropout": 0.1,
+    "use_layer_norm": true,
+    "dimension_handling": {
+      "enable_adaptive_projection": true,
+      "minimum_feature_dim": 64,
+      "ensure_head_divisibility": true
+    },
+    "comment": "Cross-replica attention to match PPO architecture"
+  },
+  "temporal_lstm": {
+    "enable": true,
+    "feature_chunks": 4,
+    "bidirectional": true,
+    "hidden_size_ratio": 0.25,
+    "residual_connections": true,
+    "comment": "Temporal LSTM for sequence modeling to match PPO architecture"
+  },
+  "state_builder_enhanced": {
+    "enable_queue_delay_features": true,
+    "max_queue_requests": 4,
+    "queue_delay_normalization": {
+      "max_wait_time_seconds": 10.0,
+      "urgency_scale": 10.0,
+      "priority_weight": 1.0
+    },
+    "feature_names": [
+      "oldest_request_wait_time",
+      "avg_queue_wait_time",
+      "queue_urgency_score"
+    ],
+    "normalization_improvements": {
+      "enable_adaptive_scaling": true,
+      "use_log_scaling_for_wait_times": true,
+      "use_sqrt_scaling_for_averages": true,
+      "comment": "Enhanced normalization matching PPO state features"
+    },
+    "comment": "Enhanced state features for queue delay awareness (same as PPO training)"
+  },
+  "statistics_stabilization": {
+    "enable_statistics_stabilization": true,
+    "stabilization_steps": 100,
+    "stabilization_policy": "random",
+    "collect_baseline_stats": true,
+    "freeze_normalizers_during_stabilization": false,
+    "enable_stabilization_logging": true,
+    "stabilization_action_distribution": "uniform",
+    "comment": "Separate from training warmup - this stabilizes state/reward normalizers before PPO starts"
+  }
 }
