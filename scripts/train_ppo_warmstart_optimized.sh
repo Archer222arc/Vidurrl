@@ -21,6 +21,7 @@
 #   --chunk-size N             每块的请求数 (默认: 5000)
 #   --total-requests N         总训练请求数 (默认: 20000)
 #   --verbose                  启用详细输出模式 (显示所有训练输出)
+#   --quick-test               快速测试模式：跳过BC，使用最新预训练模型，减少训练量
 #   --help                     显示帮助信息
 # =============================================================================
 
@@ -47,12 +48,14 @@ show_help() {
     echo "  --chunk-size N             每块的请求数 (默认: 5000)"
     echo "  --total-requests N         总训练请求数 (默认: 20000)"
     echo "  --verbose                  启用详细输出模式 (显示所有训练输出)"
+    echo "  --quick-test               快速测试模式：跳过BC，使用最新预训练模型，减少训练量"
     echo "  --help                     显示帮助信息"
     echo ""
     echo "示例:"
     echo "  $0                                    # 使用默认配置"
     echo "  $0 --num-replicas 8 --qps 5.0       # 自定义副本数和QPS"
     echo "  $0 --config configs/my_config.json   # 使用自定义配置"
+    echo "  $0 --quick-test                      # 快速测试entropy修复效果"
     echo "  $0 --force-warmstart                 # 强制重新训练"
     echo "  $0 --chunk-mode --chunk-size 5000 --total-requests 20000  # 分块训练"
 }
@@ -73,6 +76,7 @@ EXTERNAL_PRETRAIN=""
 SKIP_BC_TRAINING=false
 FORCE_WARMSTART=false
 VERBOSE=true
+QUICK_TEST=false
 
 # 分块训练参数
 CHUNK_MODE=false
@@ -138,6 +142,10 @@ while [[ $# -gt 0 ]]; do
             VERBOSE=true
             shift
             ;;
+        --quick-test)
+            QUICK_TEST=true
+            shift
+            ;;
         --help)
             show_help
             exit 0
@@ -149,6 +157,46 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Quick test模式配置
+if [[ "$QUICK_TEST" == "true" ]]; then
+    echo "⚡ 启用快速测试模式"
+
+    # 自动找到最新的预训练模型
+    if [[ -z "$EXTERNAL_PRETRAIN" ]]; then
+        # 按优先级查找预训练模型
+        PRETRAIN_PATHS=(
+            "./outputs/standalone_pretrain/pretrained_model.pt"
+            "./outputs/unified_pretrain/enhanced_model.pt"
+            "./outputs/unified_pretrain/high_quality_model.pt"
+            "./outputs/checkpoints/latest.pt"
+        )
+
+        for path in "${PRETRAIN_PATHS[@]}"; do
+            if [[ -f "$path" ]]; then
+                EXTERNAL_PRETRAIN="$path"
+                echo "🎯 找到预训练模型: $EXTERNAL_PRETRAIN"
+                break
+            fi
+        done
+
+        if [[ -z "$EXTERNAL_PRETRAIN" ]]; then
+            echo "⚠️  未找到预训练模型，创建随机初始化的快速模型"
+            # 生成一个临时预训练模型用于测试
+            EXTERNAL_PRETRAIN="./outputs/quick_test_model.pt"
+            python -c "import torch; torch.save({'state_dict': {}}, '$EXTERNAL_PRETRAIN')"
+        fi
+    fi
+
+    # 自动设置快速测试参数
+    SKIP_BC_TRAINING=true
+    PPO_REQUESTS=5000  # 减少训练量用于快速测试
+    QPS=3.0
+    echo "📊 快速测试配置:"
+    echo "   - 跳过BC预训练: $SKIP_BC_TRAINING"
+    echo "   - PPO训练请求数: $PPO_REQUESTS"
+    echo "   - 预训练模型: $EXTERNAL_PRETRAIN"
+fi
 
 # 参数验证
 if [[ "$SKIP_BC_TRAINING" == "true" && -z "$EXTERNAL_PRETRAIN" ]]; then

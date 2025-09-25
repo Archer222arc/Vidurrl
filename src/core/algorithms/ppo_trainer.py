@@ -13,6 +13,12 @@ import torch
 import torch.nn as nn
 
 from ..models.actor_critic import ActorCritic
+from .stabilized_ppo_components import (
+    gradient_preserving_clip,
+    chain_dual_bias_reduction,
+    ProductionLoadBalancingReward
+)
+from .context_aware_entropy import ContextAwareEntropyRegulator
 
 
 class PPOTrainer:
@@ -52,6 +58,26 @@ class PPOTrainer:
         kl_ref_decay_steps: int = 1000,
         warmup_steps: int = 500,
         entropy_warmup_coef: float = 0.5,
+        # GPPO and CHAIN parameters
+        use_gradient_preserving: bool = True,
+        use_chain_bias_reduction: bool = True,
+        churn_reduction_factor: float = 0.9,
+        trust_region_coef: float = 0.01,
+        # Advanced stabilization parameters
+        clip_range_vf: float = 0.2,
+        early_stop_epochs: bool = False,
+        min_epochs: int = 2,
+        # Intrinsic motivation parameters
+        use_intrinsic_motivation: bool = False,
+        intrinsic_reward_coef: float = 0.1,
+        curiosity_decay: float = 0.999,
+        exploration_anneal_steps: int = 500000,
+        # Gradient monitoring parameters
+        log_gradient_norms: bool = False,
+        log_entropy: bool = False,
+        log_kl_divergence: bool = False,
+        abort_on_nan: bool = False,
+        nan_check_frequency: int = 100,
     ):
         """
         Initialize PPO trainer.
@@ -98,11 +124,98 @@ class PPOTrainer:
         self.warmup_steps = warmup_steps
         self.entropy_warmup_coef = entropy_warmup_coef
 
+        # GPPO and CHAIN parameters
+        self.use_gradient_preserving = use_gradient_preserving
+        self.use_chain_bias_reduction = use_chain_bias_reduction
+        self.churn_reduction_factor = churn_reduction_factor
+        self.trust_region_coef = trust_region_coef
+
+        # Advanced stabilization parameters
+        self.clip_range_vf = clip_range_vf
+        self.early_stop_epochs = early_stop_epochs
+        self.min_epochs = min_epochs
+
+        # Intrinsic motivation parameters
+        self.use_intrinsic_motivation = use_intrinsic_motivation
+        self.intrinsic_reward_coef = intrinsic_reward_coef
+        self.curiosity_decay = curiosity_decay
+        self.exploration_anneal_steps = exploration_anneal_steps
+
+        # Gradient monitoring parameters
+        self.log_gradient_norms = log_gradient_norms
+        self.log_entropy = log_entropy
+        self.log_kl_divergence = log_kl_divergence
+        self.abort_on_nan = abort_on_nan
+        self.nan_check_frequency = nan_check_frequency
+
         # Reference policy for KL regularization (will be set during warm start)
         self.reference_policy = None
         self.current_step = 0
 
+        # Initialize production reward calculator
+        self.production_reward = ProductionLoadBalancingReward()
+
+        # Initialize context-aware entropy regulator with configurable parameters
+        self.context_entropy_regulator = None  # Will be initialized when context parameters are available
+
         self.opt = torch.optim.Adam(self.policy.parameters(), lr=lr)
+
+    def initialize_context_entropy_regulator(
+        self,
+        state_dim: int,
+        num_actions: int,
+        entropy_min: float = 0.01,
+        entropy_max: float = 0.5,
+        target_entropy_ratio: float = 0.6,
+        mode_collapse_threshold: float = 0.7,
+        context_sensitivity_threshold: float = 0.1,
+        performance_decline_threshold: float = -0.05,
+        emergency_boost_factor: float = 2.0,
+        gentle_adjustment_rate: float = 0.02,
+        intervention_cooldown: int = 50,
+        min_samples_for_analysis: int = 100,
+        analysis_window: int = 500,
+        state_discretization_bins: int = 10  # This will be passed to StateActionAnalyzer
+    ) -> None:
+        """
+        Initialize context-aware entropy regulator with specific parameters.
+
+        Args:
+            state_dim: Dimension of state space
+            num_actions: Number of possible actions
+            entropy_min: Minimum entropy coefficient
+            entropy_max: Maximum entropy coefficient
+            target_entropy_ratio: Target entropy as fraction of max entropy
+            mode_collapse_threshold: Threshold for detecting mode collapse
+            context_sensitivity_threshold: Min mutual info for context sensitivity
+            performance_decline_threshold: Threshold for performance decline
+            emergency_boost_factor: Factor to boost entropy in emergency
+            gentle_adjustment_rate: Rate for gentle adjustments
+            intervention_cooldown: Steps between interventions
+            min_samples_for_analysis: Minimum samples for analysis
+            analysis_window: Window size for analysis
+            state_discretization_bins: Bins for state discretization
+        """
+        self.context_entropy_regulator = ContextAwareEntropyRegulator(
+            state_dim=state_dim,
+            num_actions=num_actions,
+            device=self.device,
+            entropy_min=entropy_min,
+            entropy_max=entropy_max,
+            target_entropy_ratio=target_entropy_ratio,
+            mode_collapse_threshold=mode_collapse_threshold,
+            context_sensitivity_threshold=context_sensitivity_threshold,
+            performance_decline_threshold=performance_decline_threshold,
+            emergency_boost_factor=emergency_boost_factor,
+            gentle_adjustment_rate=gentle_adjustment_rate,
+            intervention_cooldown=intervention_cooldown,
+            min_samples_for_analysis=min_samples_for_analysis,
+            analysis_window=analysis_window
+        )
+
+        # Set state_discretization_bins on the StateActionAnalyzer if needed
+        if hasattr(self.context_entropy_regulator.state_action_analyzer, 'state_discretization_bins'):
+            self.context_entropy_regulator.state_action_analyzer.state_discretization_bins = state_discretization_bins
 
     def set_reference_policy(self, reference_policy: ActorCritic) -> None:
         """
@@ -133,29 +246,16 @@ class PPOTrainer:
 
     def get_current_entropy_coef(self) -> float:
         """
-        Get current entropy coefficient with adaptive scheduling (PDF recommendation).
+        Get current entropy coefficient using context-aware regulation.
 
-        Supports both warmup boost and linear decay scheduling for better
-        exploration-exploitation balance.
+        The context-aware entropy regulator intelligently adjusts the entropy coefficient
+        based on state-action relationships, performance trends, and mode collapse detection.
+        This replaces the simple scheduling approaches with intelligent adaptive control.
 
         Returns:
-            Current entropy coefficient
+            Current entropy coefficient from context-aware regulator
         """
-        # NEW: Adaptive entropy scheduling (PDF recommendation)
-        if self.entropy_schedule_enable:
-            # Linear decay from initial to final value
-            progress = min(1.0, self.current_step / self.entropy_decay_steps)
-            scheduled_coef = self.entropy_initial * (1 - progress) + self.entropy_final * progress
-            return scheduled_coef
-
-        # Original warmup logic (for backward compatibility)
-        base_coef = self.entropy_coef
-        if self.current_step < self.warmup_steps:
-            warmup_progress = self.current_step / self.warmup_steps
-            warmup_boost = self.entropy_warmup_coef * (1 - warmup_progress)
-            return base_coef + warmup_boost
-
-        return base_coef
+        return self.context_entropy_regulator.get_entropy_coef()
 
     def compute_kl_reference_loss(
         self,
@@ -250,13 +350,20 @@ class PPOTrainer:
                     bs, hxs, bm.unsqueeze(-1), ba
                 )
 
-                # PPO policy loss with clipping
+                # PPO policy loss with gradient-preserving clipping
                 ratio = torch.exp(new_logp - blogp)
-                surr1 = ratio * badv
-                surr2 = torch.clamp(
-                    ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio
-                ) * badv
-                pi_loss = -torch.min(surr1, surr2).mean()
+
+                if self.use_gradient_preserving:
+                    # Use GPPO gradient-preserving clipping
+                    clipped_obj = gradient_preserving_clip(ratio, badv, self.clip_ratio)
+                    pi_loss = -clipped_obj.mean()
+                else:
+                    # Traditional PPO clipping
+                    surr1 = ratio * badv
+                    surr2 = torch.clamp(
+                        ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio
+                    ) * badv
+                    pi_loss = -torch.min(surr1, surr2).mean()
 
                 # Value function loss with clipping
                 v_clipped = v_old[j] + (v_pred - v_old[j]).clamp(
@@ -270,7 +377,21 @@ class PPOTrainer:
                 kl_div = torch.mean(blogp - new_logp).clamp(min=0)
                 kl_penalty = self.kl_coef * kl_div
 
-                # Entropy bonus with warm-up boost
+                # Update context-aware entropy regulator if initialized
+                # Extract rewards from advantages (approximate)
+                approx_rewards = badv + v_pred.detach() - bret.detach()  # r_t ≈ A_t + V(s_t) - R_t
+
+                entropy_analysis = self.context_entropy_regulator.update(
+                    states=bs,
+                    actions=ba,
+                    rewards=approx_rewards,
+                    value_loss=vf_loss.item(),
+                    policy_loss=pi_loss.item(),
+                    kl_divergence=kl_div.item(),
+                    current_entropy=entropy.item()
+                )
+
+                # Use context-aware entropy coefficient
                 current_entropy_coef = self.get_current_entropy_coef()
                 entropy_bonus = current_entropy_coef * entropy
                 # Additional penalty if entropy drops below minimum
@@ -288,6 +409,14 @@ class PPOTrainer:
                 kl_ref_loss = 0.0
                 if kl_ref_coef > 0.0:
                     kl_ref_loss = kl_ref_coef * self.compute_kl_reference_loss(bs, hxs, bm)
+
+                # Apply CHAIN dual bias reduction if enabled
+                if self.use_chain_bias_reduction:
+                    pi_loss, vf_loss = chain_dual_bias_reduction(
+                        pi_loss, vf_loss,
+                        self.churn_reduction_factor,
+                        self.trust_region_coef
+                    )
 
                 # Total loss with enhanced regularization
                 loss = (pi_loss + self.value_coef * vf_loss + kl_penalty + kl_ref_loss
@@ -330,8 +459,9 @@ class PPOTrainer:
                 gradnorms.append(grad_norm)
                 evs.append(ev)
 
-        # Return training statistics
+        # Return training statistics with context-aware entropy information
         lr = self.opt.param_groups[0]["lr"]
+
         stats = {
             "pi_loss": float(np.mean(pi_losses)) if pi_losses else 0.0,
             "vf_loss": float(np.mean(vf_losses)) if vf_losses else 0.0,
@@ -342,4 +472,18 @@ class PPOTrainer:
             "explained_var": float(np.mean(evs)) if evs else 0.0,
             "lr": float(lr),
         }
+
+        # Add context-aware entropy regulation stats if available
+        entropy_diagnostics = self.context_entropy_regulator.get_diagnostic_info()
+        context_stats = {
+            "entropy_coef": entropy_diagnostics['current_entropy_coef'],
+            "entropy_emergency_mode": entropy_diagnostics['emergency_mode'],
+            "entropy_interventions": entropy_diagnostics['intervention_count'],
+            "entropy_steps_since_intervention": entropy_diagnostics['steps_since_intervention'],
+        }
+        print(f"[DEBUG] About to return stats from PPO trainer update method")
+        print(f"[DEBUG] Adding context stats to main stats: {context_stats}")
+        stats.update(context_stats)
+        print(f"[DEBUG] Final stats keys: {list(stats.keys())}")
+
         return stats

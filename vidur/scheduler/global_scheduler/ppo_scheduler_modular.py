@@ -8,6 +8,7 @@ following the project naming conventions and architecture standards.
 from __future__ import annotations
 
 from typing import Dict, List, Tuple
+from collections import deque
 
 import numpy as np
 import torch
@@ -90,6 +91,45 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         self._entropy_final = float(gcfg.entropy_final)
         self._entropy_decay_steps = int(gcfg.entropy_decay_steps)
 
+        # Revolutionary PPO Features - GPPO + CHAIN
+        self._use_gradient_preserving = bool(gcfg.use_gradient_preserving)
+        self._use_chain_bias_reduction = bool(gcfg.use_chain_bias_reduction)
+        self._churn_reduction_factor = float(gcfg.churn_reduction_factor)
+        self._trust_region_coef = float(gcfg.trust_region_coef)
+
+        # Advanced stabilization parameters
+        self._clip_range_vf = float(gcfg.clip_range_vf)
+        self._early_stop_epochs = bool(gcfg.early_stop_epochs)
+        self._min_epochs = int(gcfg.min_epochs)
+
+        # Intrinsic motivation parameters
+        self._use_intrinsic_motivation = bool(gcfg.use_intrinsic_motivation)
+        self._intrinsic_reward_coef = float(gcfg.intrinsic_reward_coef)
+        self._curiosity_decay = float(gcfg.curiosity_decay)
+        self._exploration_anneal_steps = int(gcfg.exploration_anneal_steps)
+
+        # Gradient monitoring parameters
+        self._log_gradient_norms = bool(gcfg.log_gradient_norms)
+        self._log_entropy = bool(gcfg.log_entropy)
+        self._log_kl_divergence = bool(gcfg.log_kl_divergence)
+        self._abort_on_nan = bool(gcfg.abort_on_nan)
+        self._nan_check_frequency = int(gcfg.nan_check_frequency)
+
+        # Context-Aware Entropy Regulation parameters
+        self._context_aware_entropy_enable = bool(gcfg.context_aware_entropy_enable)
+        self._context_entropy_min = float(gcfg.context_entropy_min)
+        self._context_entropy_max = float(gcfg.context_entropy_max)
+        self._context_target_entropy_ratio = float(gcfg.context_target_entropy_ratio)
+        self._context_mode_collapse_threshold = float(gcfg.context_mode_collapse_threshold)
+        self._context_sensitivity_threshold = float(gcfg.context_sensitivity_threshold)
+        self._context_performance_decline_threshold = float(gcfg.context_performance_decline_threshold)
+        self._context_emergency_boost_factor = float(gcfg.context_emergency_boost_factor)
+        self._context_gentle_adjustment_rate = float(gcfg.context_gentle_adjustment_rate)
+        self._context_intervention_cooldown = int(gcfg.context_intervention_cooldown)
+        self._context_min_samples_for_analysis = int(gcfg.context_min_samples_for_analysis)
+        self._context_analysis_window = int(gcfg.context_analysis_window)
+        self._context_state_discretization_bins = int(gcfg.context_state_discretization_bins)
+
         # Reward calculation parameters - direct access
         self._reward_latency_weight   = float(gcfg.reward_latency_weight)
         self._balance_penalty_weight  = float(gcfg.balance_penalty_weight)
@@ -144,7 +184,7 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         self._delta_weight = float(gcfg.delta_weight)
         self._alpha = float(gcfg.alpha)
         self._beta = float(gcfg.beta)
-        self._gamma = float(gcfg.gamma)
+        self._reward_gamma = float(gcfg.reward_gamma)
         self._kappa = float(gcfg.kappa)
         self._sigma = float(gcfg.sigma)
         self._ema_alpha = float(gcfg.ema_alpha)
@@ -164,6 +204,13 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         self._kl_ref_decay_steps = int(gcfg.kl_ref_decay_steps)
         self._warmup_steps = int(gcfg.warmup_steps)
 
+        # Revolutionary Reward System - Asymmetric Penalties
+        self._use_asymmetric_penalties = bool(gcfg.use_asymmetric_penalties)
+        self._false_positive_penalty = float(gcfg.false_positive_penalty)
+        self._over_provision_factor = float(gcfg.over_provision_factor)
+        self._beta_exploration_enable = bool(gcfg.beta_exploration_enable)
+        self._temporal_tracking_enable = bool(gcfg.temporal_tracking_enable)
+
         self._reward_calc = RewardCalculator(
             mode=self._reward_mode,
             latency_weight=self._reward_latency_weight,
@@ -177,10 +224,16 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             delta_weight=self._delta_weight,
             alpha=self._alpha,
             beta=self._beta,
-            gamma=self._gamma,
+            gamma=self._reward_gamma,
             kappa=self._kappa,
             sigma=self._sigma,
             ema_alpha=self._ema_alpha,
+            # Revolutionary Asymmetric Penalties
+            use_asymmetric_penalties=self._use_asymmetric_penalties,
+            false_positive_penalty=self._false_positive_penalty,
+            over_provision_factor=self._over_provision_factor,
+            beta_exploration_enable=self._beta_exploration_enable,
+            temporal_tracking_enable=self._temporal_tracking_enable,
         )
 
         # Verify critical configuration parameters
@@ -249,6 +302,8 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             enable_cross_replica_attention=self._enable_cross_replica_attention,
             attention_heads=self._cross_replica_attention_heads,
             num_replicas=self._cross_replica_num_replicas,
+            # Architecture control parameters
+            enable_temperature_scaling=self._enable_temperature_scaling,
         ).to(self._device)
 
         # Initialize PPO trainer
@@ -279,7 +334,49 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             kl_ref_coef_final=self._kl_ref_coef_final,
             kl_ref_decay_steps=self._kl_ref_decay_steps,
             warmup_steps=self._warmup_steps,
+            # Revolutionary PPO Features - GPPO + CHAIN
+            use_gradient_preserving=self._use_gradient_preserving,
+            use_chain_bias_reduction=self._use_chain_bias_reduction,
+            churn_reduction_factor=self._churn_reduction_factor,
+            trust_region_coef=self._trust_region_coef,
+            # Advanced stabilization parameters
+            clip_range_vf=self._clip_range_vf,
+            early_stop_epochs=self._early_stop_epochs,
+            min_epochs=self._min_epochs,
+            # Intrinsic motivation parameters
+            use_intrinsic_motivation=self._use_intrinsic_motivation,
+            intrinsic_reward_coef=self._intrinsic_reward_coef,
+            curiosity_decay=self._curiosity_decay,
+            exploration_anneal_steps=self._exploration_anneal_steps,
+            # Gradient monitoring parameters
+            log_gradient_norms=self._log_gradient_norms,
+            log_entropy=self._log_entropy,
+            log_kl_divergence=self._log_kl_divergence,
+            abort_on_nan=self._abort_on_nan,
+            nan_check_frequency=self._nan_check_frequency,
         )
+
+        # Initialize context-aware entropy regulator if enabled
+        logger.info(f"[PPO:init] Context-aware entropy enable: {self._context_aware_entropy_enable}")
+        if self._context_aware_entropy_enable:
+            logger.info("[PPO:init] Initializing context-aware entropy regulator...")
+            self._ppo.initialize_context_entropy_regulator(
+                state_dim=state_dim,  # Use the calculated state_dim from above
+                num_actions=len(self._replica_ids),  # Number of replicas as actions
+                entropy_min=self._context_entropy_min,
+                entropy_max=self._context_entropy_max,
+                target_entropy_ratio=self._context_target_entropy_ratio,
+                mode_collapse_threshold=self._context_mode_collapse_threshold,
+                context_sensitivity_threshold=self._context_sensitivity_threshold,
+                performance_decline_threshold=self._context_performance_decline_threshold,
+                emergency_boost_factor=self._context_emergency_boost_factor,
+                gentle_adjustment_rate=self._context_gentle_adjustment_rate,
+                intervention_cooldown=self._context_intervention_cooldown,
+                min_samples_for_analysis=self._context_min_samples_for_analysis,
+                analysis_window=self._context_analysis_window,
+                state_discretization_bins=self._context_state_discretization_bins
+            )
+            logger.info("[PPO:init] Context-aware entropy regulator initialized successfully!")
 
         # Initialize rollout buffer
         self._buf = RolloutBuffer(
@@ -317,6 +414,16 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
 
         # Normalizer reinitialization flag for inference mode
         self._needs_norm_reinit: bool = False
+
+        # Action distribution balance tracking - read from config
+        self._action_balance_enable = bool(gcfg.action_balance_enable)
+        self._action_balance_weight = float(gcfg.action_balance_weight)
+        self._action_balance_window = int(gcfg.action_balance_window)
+
+        if self._action_balance_enable:
+            self._action_history = deque(maxlen=self._action_balance_window)
+        else:
+            self._action_history = None
 
         # TensorBoard monitoring - direct access
         self._enable_tensorboard = bool(gcfg.enable_tensorboard)
@@ -458,7 +565,8 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             self._reward_mode, self._hidden_size, self._layer_N, self._gru_layers,
             self._lr, self._gamma, self._gae_lambda, self._clip_ratio,
             self._entropy_coef, self._value_coef, self._epochs, self._rollout_len,
-            self._minibatch_size, self._max_grad_norm, self._reward_latency_weight, self._balance_penalty_weight
+            self._minibatch_size, self._max_grad_norm, self._reward_latency_weight,
+            self._action_balance_weight if self._action_balance_enable else 0.0
         )
         logger.info(
             "[PPO:init] state_dim=%d sample(min/mean/max)=%.4f/%.4f/%.4f",
@@ -737,6 +845,11 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
                     r = r * penalty_scale
                     reward_info["curriculum_penalty_scale"] = penalty_scale
 
+            # Apply action distribution balance reward
+            balance_reward = self._calculate_action_balance_reward()
+            r = r + self._action_balance_weight * balance_reward
+            reward_info["action_balance_reward"] = balance_reward
+
             # Store for potential reuse if next step has invalid metrics
             self._last_reward = r
             self._last_reward_info = reward_info
@@ -866,6 +979,9 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             a, logp, v, self._hxs = self._ac.act_value(s, self._hxs, mask, temperature)
             a_i = int(a.item())
             rid = self._replica_ids[a_i]
+
+            # Update action history for balance tracking
+            self._update_action_history(a_i)
 
             # Store experience in buffer
             self._buf.add_step(
@@ -1094,7 +1210,7 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
                     "delta_weight": self._delta_weight,
                     "alpha": self._alpha,
                     "beta": self._beta,
-                    "gamma": self._gamma,
+                    "gamma": self._reward_gamma,
                     "kappa": self._kappa,
                     "sigma": self._sigma,
                     "ema_alpha": self._ema_alpha,
@@ -1312,6 +1428,51 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
                     )
 
         return result
+
+    def _calculate_action_balance_reward(self) -> float:
+        """
+        Calculate reward bonus/penalty based on action distribution balance.
+
+        Returns positive reward for balanced distribution, negative for imbalanced.
+        """
+        if not self._action_balance_enable or self._action_history is None:
+            return 0.0
+
+        if len(self._action_history) < 10:  # Need minimum samples
+            return 0.0
+
+        # Calculate action frequencies
+        action_counts = {}
+        num_actions = len(self._replica_ids)
+
+        for action in self._action_history:
+            action_counts[action] = action_counts.get(action, 0) + 1
+
+        # Convert to frequencies
+        total_actions = len(self._action_history)
+        action_freqs = [action_counts.get(i, 0) / total_actions for i in range(num_actions)]
+
+        # Calculate imbalance using coefficient of variation (std/mean)
+        # Lower values = more balanced = higher reward
+        mean_freq = 1.0 / num_actions  # Ideal frequency (0.25 for 4 replicas)
+        variance = sum((freq - mean_freq) ** 2 for freq in action_freqs) / num_actions
+        std_dev = variance ** 0.5
+
+        # Calculate balance score (higher = more balanced)
+        # Perfect balance (all equal) = 1.0, Complete collapse (one replica only) ≈ 0.0
+        max_std = (num_actions - 1) ** 0.5 / num_actions  # Max possible std
+        balance_score = max(0.0, 1.0 - (std_dev / max_std))
+
+        # Convert to reward: 0 for perfect balance, negative penalty for imbalance
+        # The more imbalanced, the more negative the reward
+        balance_reward = (balance_score - 0.5) * 2.0  # Scale to [-1, 1] range
+
+        return balance_reward
+
+    def _update_action_history(self, action: int) -> None:
+        """Update action history for balance tracking."""
+        if self._action_balance_enable and self._action_history is not None:
+            self._action_history.append(action)
 
 
 # Note: Scheduler registration is handled in global_scheduler_registry.py

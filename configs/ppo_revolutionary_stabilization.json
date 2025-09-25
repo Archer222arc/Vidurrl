@@ -1,0 +1,236 @@
+{
+  "description": "Revolutionary PPO stabilization configuration implementing CHAIN, GPPO, and asymmetric penalties",
+  "version": "2.0.0",
+  "stability_level": "production",
+
+  "training": {
+    "num_replicas": 4,
+    "ppo_requests": 5000,
+    "qps": 3,
+    "max_steps": 1000
+  },
+
+  "ppo_config": {
+    "lr": 0.0001,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_ratio": 0.1,
+    "clip_range_vf": 0.2,
+    "epochs": 2,
+    "rollout_len": 256,
+    "minibatch_size": 64,
+    "entropy_coef": 0.02,
+    "entropy_warmup_coef": 1.0,
+    "stabilization_steps": 100,
+    "max_grad_norm": 0.5,
+    "value_coef": 0.5,
+
+    "revolutionary_features": {
+      "use_gradient_preserving": true,
+      "use_chain_bias_reduction": true,
+      "churn_reduction_factor": 0.9,
+      "trust_region_coef": 0.01
+    },
+
+    "entropy_schedule": {
+      "enable": false,
+      "initial": 0.02,
+      "final": 0.0,
+      "decay_steps": 40000,
+      "adaptive_scheduling": false,
+      "entropy_coef_min": 0.001,
+      "entropy_coef_max": 0.1
+    }
+  },
+
+  "cluster_config": {
+    "num_replicas": 4,
+    "global_scheduler_config": {
+      "scheduler_type": "ppo_global_scheduler_modular",
+
+      "gamma": 0.99,
+
+      "action_balance_enable": true,
+      "action_balance_weight": 0.2,
+      "action_balance_window": 100,
+
+    "context_aware_entropy_enable": true,
+    "context_entropy_min": 0.01,
+    "context_entropy_max": 0.5,
+    "context_target_entropy_ratio": 0.6,
+    "context_mode_collapse_threshold": 0.7,
+    "context_min_action_freq_threshold": 0.20,
+    "context_sensitivity_threshold": 0.05,
+    "context_performance_decline_threshold": -0.03,
+    "context_emergency_boost_factor": 3.0,
+    "context_gentle_adjustment_rate": 0.01,
+    "context_intervention_cooldown": 10,
+    "context_min_samples_for_analysis": 100,
+    "context_analysis_window": 500,
+      "context_state_discretization_bins": 10
+    }
+  },
+
+  "actor_critic_architecture": {
+    "state_dim": 200,
+    "action_dim": 100,
+    "hidden_size": 384,
+    "gru_layers": 3,
+    "use_stabilized_gru": true,
+    "sequence_length": 32,
+    "use_separate_networks": true,
+
+    "stabilization": {
+      "enable_layer_normalization": true,
+      "enable_hyperspherical_normalization": true,
+      "input_normalization_momentum": 0.99,
+      "observation_clip": 10.0,
+      "reward_clip": 10.0,
+      "running_mean_std_momentum": 0.99,
+      "norm_epsilon": 1e-8
+    },
+
+    "enable_cross_replica_attention": true,
+    "num_replicas": 4,
+    "attention_heads": 4,
+
+    "actor": {
+      "hidden_size": 384,
+      "gru_layers": 3,
+      "temperature_scaling": true
+    },
+
+    "critic": {
+      "hidden_size": 384,
+      "gru_layers": 1
+    },
+
+    "temporal_lstm": {
+      "enable": true,
+      "feature_chunks": 4,
+      "hidden_size_ratio": 0.25,
+      "bidirectional": true,
+      "residual_connections": true
+    }
+  },
+
+  "reward_config": {
+    "mode": "hybrid",
+    "latency_weight": 1.0,
+    "balance_penalty_weight": 0.0,
+    "latency_threshold": 1.5,
+    "latency_penalty_scale": 3.0,
+    "load_balance_penalty": 0.05,
+
+    "throughput_target": 10.0,
+    "absolute_weight": 0.6,
+    "delta_weight": 0.4,
+    "alpha": 0.4,
+    "beta": 0.4,
+    "reward_gamma": 0.3,
+    "kappa": 0.25,
+    "sigma": 1.2,
+    "ema_alpha": 0.15,
+
+    "asymmetric_penalties": {
+      "use_asymmetric_penalties": true,
+      "false_positive_penalty": 5.0,
+      "over_provision_factor": 0.1,
+      "beta_exploration_enable": true,
+      "temporal_tracking_enable": true
+    }
+  },
+
+  "kl_regularization": {
+    "target_kl": 0.02,
+    "entropy_min": 0.5,
+    "entropy_penalty_coef": 0.1,
+    "kl_coef": 0.2,
+    "kl_ref_coef_initial": 0.5,
+    "kl_ref_coef_final": 0.0,
+    "kl_ref_decay_steps": 1000,
+    "warmup_steps": 500,
+
+    "entropy_threshold_penalty": {
+      "enable": true,
+      "threshold": 1.1,
+      "penalty_coef": 0.05
+    }
+  },
+
+  "advanced_stabilization": {
+    "early_stopping": {
+      "target_kl": 0.01,
+      "early_stop_epochs": true,
+      "min_epochs": 2
+    },
+
+    "intrinsic_motivation": {
+      "use_intrinsic_motivation": true,
+      "intrinsic_reward_coef": 0.1,
+      "curiosity_decay": 0.999,
+      "exploration_anneal_steps": 500000
+    },
+
+    "gradient_monitoring": {
+      "log_gradient_norms": true,
+      "log_entropy": true,
+      "log_kl_divergence": true,
+      "abort_on_nan": true,
+      "nan_check_frequency": 100
+    }
+  },
+
+  "temperature_control": {
+    "base_temperature": 1.0,
+    "min_temperature": 0.1,
+    "max_temperature": 2.0,
+    "qps_sensitivity": 0.1,
+    "latency_sensitivity": 0.2,
+    "enable_dynamic_temperature": true,
+
+    "temperature_pulse": {
+      "enable": false
+    }
+  },
+
+  "enhanced_features": {
+    "enable_enhanced_features": true,
+    "state_history_window": 10,
+    "qps_window": 30
+  },
+
+  "state_builder_enhanced": {
+    "enable_queue_delay_features": true,
+    "queue_delay_normalization": {
+      "max_wait_time_seconds": 5.0,
+      "urgency_scale": 2.0,
+      "priority_weight": 0.3
+    }
+  },
+
+  "curriculum_learning": {
+    "enable": false,
+    "stages": []
+  },
+
+  "checkpointing": {
+    "enable_checkpoints": true,
+    "checkpoint_dir": "outputs/checkpoints",
+    "checkpoint_interval": 128,
+    "max_checkpoints": 5
+  },
+
+  "monitoring": {
+    "tensorboard_port": 6006,
+    "metrics_export_format": "csv",
+    "metrics_export_interval": 100,
+    "metrics_subsamples": 1000,
+
+    "tail_latency_tracking": {
+      "enable": true,
+      "alert_threshold_p99": 2.0,
+      "window_size": 1000
+    }
+  }
+}

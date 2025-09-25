@@ -45,6 +45,26 @@ def build_ppo_args(config: Dict, output_dir: str) -> List[str]:
         f"{ppo_prefix}stabilization_steps", str(ppo_cfg["stabilization_steps"])
     ])
 
+    # Revolutionary PPO features (GPPO + CHAIN)
+    if "revolutionary_features" in ppo_cfg:
+        rev_cfg = ppo_cfg["revolutionary_features"]
+        if rev_cfg.get("use_gradient_preserving", False):
+            args.append(f"{ppo_prefix}use_gradient_preserving")
+        if rev_cfg.get("use_chain_bias_reduction", False):
+            args.append(f"{ppo_prefix}use_chain_bias_reduction")
+        args.extend([
+            f"{ppo_prefix}churn_reduction_factor", str(rev_cfg.get("churn_reduction_factor", 0.9)),
+            f"{ppo_prefix}trust_region_coef", str(rev_cfg.get("trust_region_coef", 0.01))
+        ])
+
+    # Additional PPO stabilization parameters
+    if "clip_range_vf" in ppo_cfg:
+        args.extend([f"{ppo_prefix}clip_range_vf", str(ppo_cfg["clip_range_vf"])])
+    if "max_grad_norm" in ppo_cfg:
+        args.extend([f"{ppo_prefix}max_grad_norm", str(ppo_cfg["max_grad_norm"])])
+    if "value_coef" in ppo_cfg:
+        args.extend([f"{ppo_prefix}value_coef", str(ppo_cfg["value_coef"])])
+
     # Entropy schedule configuration (NEW)
     if "entropy_schedule" in ppo_cfg and ppo_cfg["entropy_schedule"]["enable"]:
         entropy_sched = ppo_cfg["entropy_schedule"]
@@ -91,9 +111,28 @@ def build_ppo_args(config: Dict, output_dir: str) -> List[str]:
                 f"{ppo_prefix}queue_delay_priority_weight", str(state_builder_cfg["queue_delay_normalization"]["priority_weight"])
             ])
 
-    # Network architecture configuration (NEW)
+    # Network architecture configuration (NEW + Revolutionary)
     if "actor_critic_architecture" in config:
         network_cfg = config["actor_critic_architecture"]
+
+        # Revolutionary stabilization features
+        if "stabilization" in network_cfg:
+            stab_cfg = network_cfg["stabilization"]
+            if stab_cfg.get("enable_layer_normalization", False):
+                args.append(f"{ppo_prefix}enable_layer_normalization")
+            if stab_cfg.get("enable_hyperspherical_normalization", False):
+                args.append(f"{ppo_prefix}enable_hyperspherical_normalization")
+            args.extend([
+                f"{ppo_prefix}input_normalization_momentum", str(stab_cfg.get("input_normalization_momentum", 0.99)),
+                f"{ppo_prefix}observation_clip", str(stab_cfg.get("observation_clip", 10.0)),
+                f"{ppo_prefix}reward_clip", str(stab_cfg.get("reward_clip", 10.0)),
+                f"{ppo_prefix}running_mean_std_momentum", str(stab_cfg.get("running_mean_std_momentum", 0.99)),
+                f"{ppo_prefix}norm_epsilon", str(stab_cfg.get("norm_epsilon", 1e-8))
+            ])
+
+        # Stabilized GRU configuration
+        if network_cfg.get("use_stabilized_gru", False):
+            args.append(f"{ppo_prefix}use_stabilized_gru")
 
         # Cross-replica attention configuration
         if network_cfg.get("enable_cross_replica_attention", False):
@@ -136,9 +175,10 @@ def build_ppo_args(config: Dict, output_dir: str) -> List[str]:
                 if temporal_cfg.get("bidirectional", True):
                     args.append(f"{ppo_prefix}temporal_lstm_bidirectional")
 
-    # Reward configuration
+    # Reward configuration with asymmetric penalties
     reward_cfg = config["reward_config"]
     args.extend([
+        f"{ppo_prefix}reward_mode", reward_cfg.get("mode", "hybrid"),
         f"{ppo_prefix}reward_latency_weight", str(reward_cfg["latency_weight"]),
         f"{ppo_prefix}balance_penalty_weight", str(reward_cfg["balance_penalty_weight"]),
         f"{ppo_prefix}latency_threshold", str(reward_cfg["latency_threshold"]),
@@ -154,6 +194,20 @@ def build_ppo_args(config: Dict, output_dir: str) -> List[str]:
         f"{ppo_prefix}sigma", str(reward_cfg["sigma"]),
         f"{ppo_prefix}ema_alpha", str(reward_cfg.get("ema_alpha", 0.1))
     ])
+
+    # Revolutionary asymmetric penalty features
+    if "asymmetric_penalties" in reward_cfg:
+        asym_cfg = reward_cfg["asymmetric_penalties"]
+        if asym_cfg.get("use_asymmetric_penalties", False):
+            args.append(f"{ppo_prefix}use_asymmetric_penalties")
+        args.extend([
+            f"{ppo_prefix}false_positive_penalty", str(asym_cfg.get("false_positive_penalty", 5.0)),
+            f"{ppo_prefix}over_provision_factor", str(asym_cfg.get("over_provision_factor", 0.1))
+        ])
+        if asym_cfg.get("beta_exploration_enable", False):
+            args.append(f"{ppo_prefix}beta_exploration_enable")
+        if asym_cfg.get("temporal_tracking_enable", False):
+            args.append(f"{ppo_prefix}temporal_tracking_enable")
 
     # KL regularization
     kl_cfg = config["kl_regularization"]
@@ -195,6 +249,45 @@ def build_ppo_args(config: Dict, output_dir: str) -> List[str]:
         else:
             args.append(f"{ppo_prefix}disable_temperature_pulse")
 
+    # Advanced stabilization features
+    if "advanced_stabilization" in config:
+        adv_cfg = config["advanced_stabilization"]
+
+        # Early stopping configuration
+        if "early_stopping" in adv_cfg:
+            early_cfg = adv_cfg["early_stopping"]
+            if early_cfg.get("early_stop_epochs", False):
+                args.append(f"{ppo_prefix}early_stop_epochs")
+            args.extend([
+                f"{ppo_prefix}min_epochs", str(early_cfg.get("min_epochs", 2))
+            ])
+
+        # Intrinsic motivation
+        if "intrinsic_motivation" in adv_cfg:
+            intrinsic_cfg = adv_cfg["intrinsic_motivation"]
+            if intrinsic_cfg.get("use_intrinsic_motivation", False):
+                args.append(f"{ppo_prefix}use_intrinsic_motivation")
+            args.extend([
+                f"{ppo_prefix}intrinsic_reward_coef", str(intrinsic_cfg.get("intrinsic_reward_coef", 0.1)),
+                f"{ppo_prefix}curiosity_decay", str(intrinsic_cfg.get("curiosity_decay", 0.999)),
+                f"{ppo_prefix}exploration_anneal_steps", str(intrinsic_cfg.get("exploration_anneal_steps", 500000))
+            ])
+
+        # Gradient monitoring
+        if "gradient_monitoring" in adv_cfg:
+            grad_cfg = adv_cfg["gradient_monitoring"]
+            if grad_cfg.get("log_gradient_norms", False):
+                args.append(f"{ppo_prefix}log_gradient_norms")
+            if grad_cfg.get("log_entropy", False):
+                args.append(f"{ppo_prefix}log_entropy")
+            if grad_cfg.get("log_kl_divergence", False):
+                args.append(f"{ppo_prefix}log_kl_divergence")
+            if grad_cfg.get("abort_on_nan", False):
+                args.append(f"{ppo_prefix}abort_on_nan")
+            args.extend([
+                f"{ppo_prefix}nan_check_frequency", str(grad_cfg.get("nan_check_frequency", 100))
+            ])
+
     # Enhanced features
     if config["enhanced_features"]["enable_enhanced_features"]:
         enhanced_cfg = config["enhanced_features"]
@@ -203,6 +296,39 @@ def build_ppo_args(config: Dict, output_dir: str) -> List[str]:
             f"{ppo_prefix}state_history_window", str(enhanced_cfg["state_history_window"]),
             f"{ppo_prefix}qps_window", str(enhanced_cfg["qps_window"])
         ])
+
+    # Action Balance Reward (Revolutionary Feature)
+    if "cluster_config" in config and "global_scheduler_config" in config["cluster_config"]:
+        scheduler_cfg = config["cluster_config"]["global_scheduler_config"]
+
+        if scheduler_cfg.get("action_balance_enable", False):
+            args.extend([
+                f"{ppo_prefix}action_balance_enable",
+                f"{ppo_prefix}action_balance_weight", str(scheduler_cfg.get("action_balance_weight", 0.1)),
+                f"{ppo_prefix}action_balance_window", str(scheduler_cfg.get("action_balance_window", 50))
+            ])
+
+    # Context-aware entropy regulation (Revolutionary Feature)
+    if "cluster_config" in config and "global_scheduler_config" in config["cluster_config"]:
+        scheduler_cfg = config["cluster_config"]["global_scheduler_config"]
+
+        if scheduler_cfg.get("context_aware_entropy_enable", False):
+            args.extend([
+                f"{ppo_prefix}context_aware_entropy_enable",
+                f"{ppo_prefix}context_entropy_min", str(scheduler_cfg.get("context_entropy_min", 0.01)),
+                f"{ppo_prefix}context_entropy_max", str(scheduler_cfg.get("context_entropy_max", 0.5)),
+                f"{ppo_prefix}context_target_entropy_ratio", str(scheduler_cfg.get("context_target_entropy_ratio", 0.6)),
+                f"{ppo_prefix}context_mode_collapse_threshold", str(scheduler_cfg.get("context_mode_collapse_threshold", 0.7)),
+                f"{ppo_prefix}context_min_action_freq_threshold", str(scheduler_cfg.get("context_min_action_freq_threshold", 0.08)),
+                f"{ppo_prefix}context_sensitivity_threshold", str(scheduler_cfg.get("context_sensitivity_threshold", 0.1)),
+                f"{ppo_prefix}context_performance_decline_threshold", str(scheduler_cfg.get("context_performance_decline_threshold", -0.05)),
+                f"{ppo_prefix}context_emergency_boost_factor", str(scheduler_cfg.get("context_emergency_boost_factor", 2.0)),
+                f"{ppo_prefix}context_gentle_adjustment_rate", str(scheduler_cfg.get("context_gentle_adjustment_rate", 0.02)),
+                f"{ppo_prefix}context_intervention_cooldown", str(scheduler_cfg.get("context_intervention_cooldown", 50)),
+                f"{ppo_prefix}context_min_samples_for_analysis", str(scheduler_cfg.get("context_min_samples_for_analysis", 100)),
+                f"{ppo_prefix}context_analysis_window", str(scheduler_cfg.get("context_analysis_window", 500)),
+                f"{ppo_prefix}context_state_discretization_bins", str(scheduler_cfg.get("context_state_discretization_bins", 10))
+            ])
 
     # Dynamic temperature
     if temp_cfg["enable_dynamic_temperature"]:

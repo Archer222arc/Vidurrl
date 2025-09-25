@@ -13,6 +13,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Categorical
 from .exploration_bonus import StabilizedCategorical
+# Import moved inside class methods to avoid circular imports
 
 
 def init_layer(layer: nn.Module, gain: float = 1.0, use_orthogonal: bool = True) -> None:
@@ -143,6 +144,8 @@ class ActorCritic(nn.Module):
         enable_cross_replica_attention: bool = True,
         num_replicas: int = 4,
         attention_heads: int = 4,
+        # Architecture control parameters
+        enable_temperature_scaling: bool = False,
     ):
         """
         Initialize Enhanced Actor-Critic network with cross-replica attention.
@@ -161,6 +164,10 @@ class ActorCritic(nn.Module):
             attention_heads: Number of attention heads for cross-replica attention
         """
         super().__init__()
+
+        # Import here to avoid circular imports
+        from ..algorithms.stabilized_ppo_components import StabilizedGRU, RunningStatsNorm
+
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.hidden_size = hidden_size
@@ -173,15 +180,27 @@ class ActorCritic(nn.Module):
         self.num_replicas = num_replicas
         self.attention_heads = attention_heads
 
-        # Feature projection layer for multi-dimensional state normalization
+        # Architecture control parameters
+        self.enable_temperature_scaling = enable_temperature_scaling
+
+        # Feature projection with stabilized normalization for high-dimensional inputs
+        self.input_stabilizer = RunningStatsNorm(state_dim, momentum=0.99)
+
+        # Create projection layers explicitly for proper initialization
+        self.feature_proj_1 = nn.Linear(state_dim, self.feature_projection_dim)
+        self.feature_proj_activation = nn.GELU()
+        self.feature_proj_2 = nn.Linear(self.feature_projection_dim, hidden_size)
+
+        # Initialize projection layers
+        init_layer(self.feature_proj_1, gain=math.sqrt(2), use_orthogonal=use_orthogonal)
+        init_layer(self.feature_proj_2, gain=math.sqrt(2), use_orthogonal=use_orthogonal)
+
+        # Create sequential for forward pass
         self.feature_proj = nn.Sequential(
-            nn.LayerNorm(state_dim),
-            nn.Linear(state_dim, self.feature_projection_dim),
-            nn.GELU(),
-            nn.Linear(self.feature_projection_dim, hidden_size),
+            self.feature_proj_1,
+            self.feature_proj_activation,
+            self.feature_proj_2,
         )
-        init_layer(self.feature_proj[1], gain=math.sqrt(2), use_orthogonal=use_orthogonal)
-        init_layer(self.feature_proj[3], gain=math.sqrt(2), use_orthogonal=use_orthogonal)
 
         # NEW: Cross-replica attention mechanism (PDF recommendation)
         if self.enable_cross_replica_attention:
@@ -230,19 +249,28 @@ class ActorCritic(nn.Module):
                 init_layer(self.mlp_h[-1], gain=math.sqrt(2), use_orthogonal=use_orthogonal)
             self.shared_mlp = nn.Sequential(*mlp)
 
-        # GRU recurrent layers
-        self.gru = nn.GRU(
-            input_size=hidden_size,
-            hidden_size=hidden_size,
-            num_layers=gru_layers,
-            batch_first=False,  # Use (T,N,H) format
-        )
-        for name, param in self.gru.named_parameters():
-            if "weight" in name:
-                nn.init.orthogonal_(param)
-            elif "bias" in name:
-                nn.init.constant_(param, 0.0)
-        self.gru_ln = nn.LayerNorm(hidden_size)
+        # Stabilized GRU with layer normalization and input stabilization
+        self.use_stabilized_gru = True  # Enable revolutionary stabilization
+        if self.use_stabilized_gru:
+            self.stabilized_gru = StabilizedGRU(
+                input_size=hidden_size,
+                hidden_size=hidden_size,
+                n_layers=gru_layers
+            )
+        else:
+            # Fallback to original GRU (legacy support)
+            self.gru = nn.GRU(
+                input_size=hidden_size,
+                hidden_size=hidden_size,
+                num_layers=gru_layers,
+                batch_first=False,
+            )
+            for name, param in self.gru.named_parameters():
+                if "weight" in name:
+                    nn.init.orthogonal_(param)
+                elif "bias" in name:
+                    nn.init.constant_(param, 0.0)
+            self.gru_ln = nn.LayerNorm(hidden_size)
 
         # NEW: Modular Temporal LSTM component (configuration-controlled)
         from .components import TemporalLSTMFactory
@@ -329,7 +357,7 @@ class ActorCritic(nn.Module):
 
     def forward_mlp(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass through feature projection, cross-replica attention, and shared MLP.
+        Forward pass with stabilized normalization, cross-replica attention, and shared MLP.
 
         Args:
             x: Input tensor of shape (N, state_dim)
@@ -337,8 +365,11 @@ class ActorCritic(nn.Module):
         Returns:
             Encoded features of shape (N, hidden_size)
         """
-        # Feature projection for multi-scale normalization
-        x = self.feature_proj(x)
+        # Apply input stabilization for high-dimensional inputs
+        x_stabilized, _, _ = self.input_stabilizer(x)
+
+        # Feature projection after stabilization
+        x = self.feature_proj(x_stabilized)
         original_x = x  # Store for residual connection
 
         # NEW: Cross-replica attention mechanism (PDF recommendation)
@@ -430,7 +461,7 @@ class ActorCritic(nn.Module):
         self, x: torch.Tensor, hxs: torch.Tensor, masks: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Forward pass through shared GRU layers.
+        Forward pass through stabilized or legacy GRU layers.
 
         Args:
             x: Input tensor of shape (N, hidden_size)
@@ -440,17 +471,36 @@ class ActorCritic(nn.Module):
         Returns:
             Tuple of (output, updated_hidden_states)
         """
-        # x: (N, H) -> (T=1, N, H)
-        x = x.unsqueeze(0)
-        # Reset hidden states based on masks
-        if hxs is not None and masks is not None:
-            masks_expanded = masks.view(1, -1, 1)
-            hxs = hxs * masks_expanded
+        if self.use_stabilized_gru:
+            # Use revolutionary stabilized GRU
+            # Reset hidden states based on masks
+            if hxs is not None and masks is not None:
+                # Apply mask to each layer
+                hxs_list = []
+                for i in range(hxs.shape[0]):
+                    masked_h = hxs[i] * masks.unsqueeze(-1)
+                    hxs_list.append(masked_h)
+                hxs_input = torch.stack(hxs_list, dim=0)
+            else:
+                hxs_input = hxs
 
-        out, hxs = self.gru(x, hxs)
-        out = out.squeeze(0)  # (N, H)
-        out = self.gru_ln(out)
-        return out, hxs
+            # Forward through stabilized GRU (expects 3D input: N, T=1, H)
+            x_3d = x.unsqueeze(1)  # (N, 1, H)
+            out_3d, new_hxs = self.stabilized_gru(x_3d, hxs_input)
+            out = out_3d.squeeze(1)  # (N, H)
+
+            return out, new_hxs
+        else:
+            # Legacy GRU implementation
+            x = x.unsqueeze(0)  # (1, N, H)
+            if hxs is not None and masks is not None:
+                masks_expanded = masks.view(1, -1, 1)
+                hxs = hxs * masks_expanded
+
+            out, hxs = self.gru(x, hxs)
+            out = out.squeeze(0)  # (N, H)
+            out = self.gru_ln(out)
+            return out, hxs
 
     def act_value(
         self, s: torch.Tensor, hxs: torch.Tensor, masks: torch.Tensor, temperature: float = 1.0
@@ -479,6 +529,16 @@ class ActorCritic(nn.Module):
 
             # Critic branch with separate GRU
             z_critic = self.critic_branch(z_shared)
+            # Ensure z_critic is 2D (N, H) before unsqueezing to 3D (1, N, H) for GRU
+            if z_critic.dim() > 2:
+                # If z_critic is already 3D or higher, flatten/reshape it to 2D
+                batch_size = z_critic.shape[0]
+                z_critic = z_critic.view(batch_size, -1)
+                # If flattened dimension doesn't match hidden_size, project it
+                if z_critic.shape[1] != self.hidden_size:
+                    if not hasattr(self, '_critic_proj'):
+                        self._critic_proj = torch.nn.Linear(z_critic.shape[1], self.hidden_size).to(z_critic.device)
+                    z_critic = self._critic_proj(z_critic)
             z_critic = z_critic.unsqueeze(0)  # (1, N, H)
             # Extract single layer for critic from multi-layer hxs
             if isinstance(hxs, tuple):
@@ -532,6 +592,16 @@ class ActorCritic(nn.Module):
 
             # Critic branch with separate GRU
             z_critic = self.critic_branch(z_shared)
+            # Ensure z_critic is 2D (N, H) before unsqueezing to 3D (1, N, H) for GRU
+            if z_critic.dim() > 2:
+                # If z_critic is already 3D or higher, flatten/reshape it to 2D
+                batch_size = z_critic.shape[0]
+                z_critic = z_critic.view(batch_size, -1)
+                # If flattened dimension doesn't match hidden_size, project it
+                if z_critic.shape[1] != self.hidden_size:
+                    if not hasattr(self, '_critic_proj'):
+                        self._critic_proj = torch.nn.Linear(z_critic.shape[1], self.hidden_size).to(z_critic.device)
+                    z_critic = self._critic_proj(z_critic)
             z_critic = z_critic.unsqueeze(0)  # (1, N, H)
             # Extract single layer for critic from multi-layer hxs
             if isinstance(hxs, tuple):

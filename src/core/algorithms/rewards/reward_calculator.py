@@ -7,6 +7,7 @@ This module provides reward computation logic for different modes:
 """
 
 from typing import Dict, List, Protocol, Tuple
+from collections import deque
 
 import numpy as np
 
@@ -61,6 +62,12 @@ class RewardCalculator:
         kappa: float = 0.25,           # IMPROVED: Reduced from 0.3 to soften logistic penalty
         sigma: float = 1.2,            # IMPROVED: Increased from 1.0 for smoother penalty curve
         ema_alpha: float = 0.15,       # IMPROVED: Increased from 0.1 for faster adaptation
+        # Phase 2: Production asymmetric penalty patterns
+        use_asymmetric_penalties: bool = True,
+        false_positive_penalty: float = 5.0,  # Under-provisioning penalty (Meta's 5:1 ratio)
+        over_provision_factor: float = 0.1,   # Over-provisioning penalty
+        beta_exploration_enable: bool = True, # Self-adaptive Beta distribution exploration
+        temporal_tracking_enable: bool = True, # Temporal performance tracking
     ):
         """
         Initialize enhanced reward calculator.
@@ -113,6 +120,22 @@ class RewardCalculator:
         self.throughput_var = 0.0
         self.latency_ema = 0.0
         self.latency_var = 0.0
+
+        # Phase 2: Production asymmetric penalty parameters
+        self.use_asymmetric_penalties = use_asymmetric_penalties
+        self.false_positive_penalty = false_positive_penalty
+        self.over_provision_factor = over_provision_factor
+        self.beta_exploration_enable = beta_exploration_enable
+        self.temporal_tracking_enable = temporal_tracking_enable
+
+        # Beta distribution parameters for self-adaptive exploration
+        self.success_alpha = 1.0  # Success count + 1
+        self.failure_beta = 1.0   # Failure count + 1
+        self.beta_shaping_weight = 0.05
+
+        # Temporal performance tracking
+        self.performance_history = deque(maxlen=100)
+        self.scheduling_efficiency_history = deque(maxlen=50)
 
         # Reward analysis
         self.reward_breakdown = {}
@@ -374,7 +397,7 @@ class RewardCalculator:
                 **self.reward_breakdown
             })
 
-        else:  # hybrid mode - restructured reward
+        else:  # hybrid mode - restructured reward with asymmetric penalties
             # Update EMA statistics for normalization
             self.update_ema_stats(throughput, latency)
 
@@ -383,12 +406,32 @@ class RewardCalculator:
             delta_score = self.calculate_delta_score(throughput, latency)
             logistic_penalty = self.calculate_logistic_penalty(latency)
 
+            # Phase 2: Add production asymmetric penalty patterns
+            asymmetric_penalty = 0.0
+            beta_exploration_bonus = 0.0
+            temporal_trend_bonus = 0.0
+
+            if self.use_asymmetric_penalties:
+                asymmetric_penalty = self.calculate_asymmetric_allocation_penalty(
+                    throughput, latency, current_time
+                )
+
+            if self.beta_exploration_enable:
+                beta_exploration_bonus = self.calculate_beta_exploration_bonus(
+                    throughput, latency
+                )
+
+            if self.temporal_tracking_enable:
+                temporal_trend_bonus = self.calculate_temporal_performance_trend(
+                    throughput, latency
+                )
+
             # Enhanced load balance penalties
             load_balance_penalty = self.calculate_load_balance_penalty(replica_ids, get_replica_scheduler_fn)
             direct_imbalance_penalty = self.calculate_direct_load_imbalance_penalty(replica_ids, get_replica_scheduler_fn)
             extreme_imbalance_penalty = self.calculate_extreme_imbalance_penalty(replica_ids, get_replica_scheduler_fn)
 
-            # Combine components with enhanced load balance penalties
+            # Combine components with asymmetric penalties and temporal tracking
             raw_reward = (
                 self.absolute_weight * absolute_score  # Primary: absolute performance
                 + self.delta_weight * delta_score      # Secondary: improvement signal
@@ -396,6 +439,9 @@ class RewardCalculator:
                 - 2.0 * direct_imbalance_penalty       # ENHANCED: Increased penalty weight to discourage hot-spotting
                 - extreme_imbalance_penalty            # NEW: Severe penalty for extreme hot-spotting
                 - logistic_penalty                     # Smooth latency penalty
+                - asymmetric_penalty                   # Phase 2: Meta's asymmetric penalty patterns
+                + beta_exploration_bonus               # Phase 2: Beta distribution exploration
+                + temporal_trend_bonus                 # Phase 2: Temporal performance tracking
             )
 
             # Apply adaptive scaling to preserve gradient information
@@ -407,14 +453,19 @@ class RewardCalculator:
             delta_throughput = throughput - self.last_throughput
             delta_latency = latency - self.last_latency
 
-            # Store detailed breakdown for analysis
+            # Store detailed breakdown for analysis with Phase 2 components
             self.reward_breakdown = {
                 "absolute_score": absolute_score,
                 "delta_score": delta_score,
                 "logistic_penalty": logistic_penalty,
                 "load_balance_penalty": load_balance_penalty,
-                "direct_imbalance_penalty": direct_imbalance_penalty,  # Track direct penalty
-                "extreme_imbalance_penalty": extreme_imbalance_penalty,  # NEW: Track extreme penalty
+                "direct_imbalance_penalty": direct_imbalance_penalty,
+                "extreme_imbalance_penalty": extreme_imbalance_penalty,
+                "asymmetric_penalty": asymmetric_penalty,  # Phase 2
+                "beta_exploration_bonus": beta_exploration_bonus,  # Phase 2
+                "temporal_trend_bonus": temporal_trend_bonus,  # Phase 2
+                "success_alpha": self.success_alpha,  # Phase 2: Beta distribution state
+                "failure_beta": self.failure_beta,   # Phase 2: Beta distribution state
                 "throughput_ema": self.throughput_ema,
                 "latency_ema": self.latency_ema,
                 "throughput_var": self.throughput_var,
@@ -424,7 +475,7 @@ class RewardCalculator:
                 "raw_throughput": raw_throughput,
                 "raw_latency": raw_latency,
                 "step_count": self.step_count,
-                "reward_scaling": "linear",  # Track that we're using linear scaling
+                "reward_scaling": "linear",
                 "reward_scale_factor": reward_scale,
             }
 
@@ -434,8 +485,11 @@ class RewardCalculator:
                 "absolute_score": absolute_score,
                 "delta_score": delta_score,
                 "logistic_penalty": logistic_penalty,
-                "direct_imbalance_penalty": direct_imbalance_penalty,  # Include in info
-                "extreme_imbalance_penalty": extreme_imbalance_penalty,  # NEW: Include extreme penalty in info
+                "direct_imbalance_penalty": direct_imbalance_penalty,
+                "extreme_imbalance_penalty": extreme_imbalance_penalty,
+                "asymmetric_penalty": asymmetric_penalty,  # Phase 2
+                "beta_exploration_bonus": beta_exploration_bonus,  # Phase 2
+                "temporal_trend_bonus": temporal_trend_bonus,  # Phase 2
                 "mode": "hybrid",
                 **self.reward_breakdown
             })
@@ -667,8 +721,136 @@ class RewardCalculator:
         """
         return self.reward_breakdown.copy()
 
+    def calculate_asymmetric_allocation_penalty(
+        self, throughput: float, latency: float, current_time: float
+    ) -> float:
+        """
+        Calculate Meta's production asymmetric penalty for allocation decisions.
+
+        Implements 5:1 penalty ratio for under-provisioning vs over-provisioning
+        based on performance indicators rather than explicit allocation data.
+
+        Args:
+            throughput: Current system throughput
+            latency: Current system latency
+            current_time: Current simulation time
+
+        Returns:
+            Asymmetric penalty based on system performance indicators
+        """
+        # Estimate allocation efficiency from latency vs throughput ratio
+        efficiency_ratio = throughput / (latency + 1e-8)
+
+        # Determine if system appears under or over-provisioned
+        baseline_efficiency = self.throughput_target / max(self.latency_threshold, 0.5)
+        relative_efficiency = efficiency_ratio / baseline_efficiency
+
+        penalty = 0.0
+
+        if relative_efficiency < 0.8:  # Under-provisioned (high latency, low throughput)
+            # Severe penalty for SLA violations (Meta's approach)
+            under_provision_severity = 0.8 - relative_efficiency
+            penalty = self.false_positive_penalty * under_provision_severity
+            self.failure_beta += 1  # Record failure for Beta distribution
+
+        elif relative_efficiency > 1.5:  # Over-provisioned (low latency, high throughput but wasteful)
+            # Mild penalty for resource waste
+            over_provision_severity = relative_efficiency - 1.5
+            penalty = self.over_provision_factor * over_provision_severity
+            self.success_alpha += 0.5  # Partial success
+
+        else:
+            # Good allocation range
+            self.success_alpha += 1  # Record success
+
+        return float(penalty)
+
+    def calculate_beta_exploration_bonus(
+        self, throughput: float, latency: float
+    ) -> float:
+        """
+        Calculate self-adaptive exploration bonus using Beta distribution.
+
+        This implements the production pattern where exploration is adjusted
+        based on success/failure history using Beta distribution sampling.
+
+        Args:
+            throughput: Current throughput
+            latency: Current latency
+
+        Returns:
+            Exploration bonus weighted by Beta distribution coefficient
+        """
+        if not self.beta_exploration_enable:
+            return 0.0
+
+        # Performance score for exploration weighting
+        normalized_latency = 1.0 / (latency + 1e-8)
+        performance_score = normalized_latency * throughput
+
+        # Sample exploration coefficient from Beta distribution
+        exploration_coef = np.random.beta(self.success_alpha, self.failure_beta)
+
+        # Weight exploration bonus by performance and Beta coefficient
+        bonus = exploration_coef * performance_score * self.beta_shaping_weight
+
+        return float(bonus)
+
+    def calculate_temporal_performance_trend(
+        self, throughput: float, latency: float
+    ) -> float:
+        """
+        Calculate temporal performance trend bonus using gradient analysis.
+
+        This tracks performance improvements over time and provides bonus
+        for sustained positive trends (Google's production approach).
+
+        Args:
+            throughput: Current throughput
+            latency: Current latency
+
+        Returns:
+            Temporal trend bonus (positive for improving performance)
+        """
+        if not self.temporal_tracking_enable:
+            return 0.0
+
+        # Calculate performance score
+        normalized_latency = 1.0 / (latency + 1e-8)
+        performance_score = normalized_latency * throughput
+
+        # Add to history
+        self.performance_history.append(performance_score)
+
+        # Calculate trend if we have sufficient history
+        if len(self.performance_history) < 3:
+            return 0.0
+
+        # Use numpy gradient to calculate performance trend
+        performance_array = np.array(list(self.performance_history))
+        trend_gradient = np.gradient(performance_array)
+
+        # Recent trend (last few points)
+        recent_trend = float(np.mean(trend_gradient[-3:]))
+
+        # AWS GameServer scheduling efficiency pattern
+        scheduling_efficiency = min(1.0, throughput / (self.throughput_target + 1e-8))
+        self.scheduling_efficiency_history.append(scheduling_efficiency)
+
+        # Combine trend with scheduling efficiency improvement
+        efficiency_trend = 0.0
+        if len(self.scheduling_efficiency_history) >= 2:
+            efficiency_diff = (self.scheduling_efficiency_history[-1] -
+                             self.scheduling_efficiency_history[-2])
+            efficiency_trend = float(efficiency_diff)
+
+        # Weight temporal components (0.1 for performance trend, 0.2 for efficiency)
+        temporal_bonus = 0.1 * recent_trend + 0.2 * efficiency_trend
+
+        return temporal_bonus
+
     def reset_state(self) -> None:
-        """Reset internal state tracking."""
+        """Reset internal state tracking including Phase 2 components."""
         self.last_throughput = 0.0
         self.last_latency = 0.0
         self.throughput_ema = 0.0
@@ -677,6 +859,12 @@ class RewardCalculator:
         self.latency_var = 0.0
         self.reward_breakdown = {}
         self.step_count = 0
+
+        # Reset Phase 2 components
+        self.success_alpha = 1.0
+        self.failure_beta = 1.0
+        self.performance_history.clear()
+        self.scheduling_efficiency_history.clear()
 
     def _adaptive_reward_scaling(self, raw_reward: float, scale_factor: float = 1.5) -> float:
         """

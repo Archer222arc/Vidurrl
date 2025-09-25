@@ -135,6 +135,16 @@ class ExplorationBonus(nn.Module):
         """
         Compute uncertainty bonus to prevent overconfidence.
         """
+        # Ensure logits has correct shape [batch_size, num_actions]
+        if logits.dim() != 2 or logits.shape[-1] != self.num_actions:
+            # Reshape logits to correct format if needed
+            batch_size = logits.shape[0]
+            if logits.numel() == batch_size * self.num_actions:
+                logits = logits.view(batch_size, self.num_actions)
+            else:
+                # If size doesn't match, take only the first num_actions elements
+                logits = logits.view(batch_size, -1)[:, :self.num_actions]
+
         # Convert logits to probabilities
         probs = F.softmax(logits, dim=-1)
 
@@ -149,6 +159,13 @@ class ExplorationBonus(nn.Module):
         # or very high (too random)
         target_entropy_normalized = self.target_entropy / max_entropy
         entropy_deviation = torch.abs(normalized_entropy - target_entropy_normalized)
+
+        # Ensure entropy_deviation is correct shape [batch_size, 1] before expanding
+        if entropy_deviation.dim() > 2:
+            entropy_deviation = entropy_deviation.squeeze(-1)
+        if entropy_deviation.dim() == 1:
+            entropy_deviation = entropy_deviation.unsqueeze(-1)
+
         uncertainty_bonus = entropy_deviation.expand(-1, self.num_actions)
 
         return uncertainty_bonus
