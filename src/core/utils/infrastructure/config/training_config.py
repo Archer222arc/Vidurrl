@@ -189,7 +189,7 @@ def build_ppo_args(config: Dict, output_dir: str) -> List[str]:
         f"{ppo_prefix}delta_weight", str(reward_cfg["delta_weight"]),
         f"{ppo_prefix}alpha", str(reward_cfg["alpha"]),
         f"{ppo_prefix}beta", str(reward_cfg.get("beta", 0.4)),
-        f"{ppo_prefix}gamma", str(reward_cfg.get("gamma", 0.3)),
+        f"{ppo_prefix}reward_gamma", str(reward_cfg.get("reward_gamma", 0.3)),
         f"{ppo_prefix}kappa", str(reward_cfg["kappa"]),
         f"{ppo_prefix}sigma", str(reward_cfg["sigma"]),
         f"{ppo_prefix}ema_alpha", str(reward_cfg.get("ema_alpha", 0.1))

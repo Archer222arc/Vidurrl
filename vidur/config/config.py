@@ -532,7 +532,7 @@ class DQNGlobalSchedulerOnlineConfig(BaseGlobalSchedulerConfig):
 )
     # DQN 超参
     lr: float = field(default=5e-3, metadata={"help": "Learning rate."})
-    gamma: float = field(default=0.95, metadata={"help": "Discount factor."})
+    gamma: float = field(default=0.99, metadata={"help": "Discount factor."})
     epsilon: float = field(default=0.1, metadata={"help": "Epsilon for ε-greedy."})
     epsilon_min: float = field(default=0.01, metadata={"help": "Min epsilon."})
     epsilon_decay: float = field(default=0.995, metadata={"help": "Epsilon decay."})
@@ -584,7 +584,7 @@ class PPOGlobalSchedulerOnlineConfig(DQNGlobalSchedulerOnlineConfig):
 )
     # DQN 超参
     lr: float = field(default=5e-3, metadata={"help": "Learning rate."})
-    gamma: float = field(default=0.95, metadata={"help": "Discount factor."})
+    gamma: float = field(default=0.99, metadata={"help": "Discount factor."})
     epsilon: float = field(default=0.1, metadata={"help": "Epsilon for ε-greedy."})
     epsilon_min: float = field(default=0.01, metadata={"help": "Min epsilon."})
     epsilon_decay: float = field(default=0.995, metadata={"help": "Epsilon decay."})
