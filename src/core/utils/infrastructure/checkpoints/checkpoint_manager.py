@@ -256,25 +256,33 @@ class CheckpointManager:
         except Exception as e:
             return {"error": str(e)}
 
-    def _serialize_normalizer(self, normalizer: RunningNormalizer) -> Dict[str, Any]:
+    def _serialize_normalizer(self, normalizer) -> Dict[str, Any]:
         """Serialize normalizer state to dictionary."""
-        return {
-            "eps": normalizer.eps,
-            "clip": normalizer.clip,
-            "count": normalizer.count,
-            "mean": normalizer.mean.tolist() if normalizer.mean is not None else None,
-            "m2": normalizer.m2.tolist() if normalizer.m2 is not None else None,
-        }
+        # Handle both RunningNormalizer and VecNormalize
+        if hasattr(normalizer, 'state_dict'):  # VecNormalize
+            return normalizer.state_dict()
+        else:  # RunningNormalizer
+            return {
+                "eps": normalizer.eps,
+                "clip": normalizer.clip,
+                "count": normalizer.count,
+                "mean": normalizer.mean.tolist() if normalizer.mean is not None else None,
+                "m2": normalizer.m2.tolist() if normalizer.m2 is not None else None,
+            }
 
     def _deserialize_normalizer(
-        self, normalizer: RunningNormalizer, state: Dict[str, Any]
+        self, normalizer, state: Dict[str, Any]
     ) -> None:
         """Deserialize normalizer state from dictionary."""
-        normalizer.eps = state["eps"]
-        normalizer.clip = state["clip"]
-        normalizer.count = state["count"]
-        normalizer.mean = np.array(state["mean"]) if state["mean"] is not None else None
-        normalizer.m2 = np.array(state["m2"]) if state["m2"] is not None else None
+        # Handle both RunningNormalizer and VecNormalize
+        if hasattr(normalizer, 'load_state_dict'):  # VecNormalize
+            normalizer.load_state_dict(state)
+        else:  # RunningNormalizer
+            normalizer.eps = state["eps"]
+            normalizer.clip = state["clip"]
+            normalizer.count = state["count"]
+            normalizer.mean = np.array(state["mean"]) if state["mean"] is not None else None
+            normalizer.m2 = np.array(state["m2"]) if state["m2"] is not None else None
 
     def _cleanup_old_checkpoints(self) -> None:
         """Remove old checkpoints to maintain max_checkpoints limit."""

@@ -396,13 +396,13 @@ class ContextAwareEntropyRegulator:
         target_entropy_ratio: float = 0.6,  # Fraction of max entropy
         # Intervention thresholds
         mode_collapse_threshold: float = 0.75,  # Max frequency for single action (legacy)
-        min_action_freq_threshold: float = 0.08,  # Min frequency per action (load balancing critical)
+        min_action_freq_threshold: float = 0.01,  # Min frequency per action (load balancing critical)
         context_sensitivity_threshold: float = 0.1,  # Min mutual info for context sensitivity
         performance_decline_threshold: float = -0.1,  # Significant performance decline
         # Adjustment parameters
-        emergency_boost_factor: float = 2.0,
+        emergency_boost_factor: float = 10.0,
         gentle_adjustment_rate: float = 0.01,
-        intervention_cooldown: int = 5,  # Steps between interventions (reduced for immediate mode collapse detection)
+        intervention_cooldown: int = 3,  # Steps between interventions (reduced for immediate mode collapse detection)
         # Analysis parameters
         analysis_window: int = 500,
         min_samples_for_analysis: int = 20
@@ -569,15 +569,35 @@ class ContextAwareEntropyRegulator:
         performance_score = performance_analysis['performance_score']
         plateau_detected = plateau_analysis['plateau_detected']
 
-        # Emergency intervention: Load balancing mode collapse detection
-        # Check for under-representation (critical for load balancing)
+        # Advanced Early Warning System: Multi-layer collapse detection
         action_frequencies = context_analysis['action_distribution']
         min_action_freq = min(action_frequencies) if action_frequencies else 1.0
 
-        # DEBUG: Log detailed analysis
-        print(f"[DEBUG] Mode collapse analysis:")
+        # Calculate distribution variance for early warning
+        import numpy as np
+        freq_array = np.array(action_frequencies)
+        expected_uniform = 1.0 / self.num_actions  # 0.25 for 4 replicas
+        variance_from_uniform = np.var(freq_array)
+        max_allowed_variance = expected_uniform * 0.5  # Early warning threshold
+
+        # Distribution skew detection (early intervention)
+        std_dev = np.std(freq_array)
+        coefficient_of_variation = std_dev / np.mean(freq_array) if np.mean(freq_array) > 0 else 0
+        high_skew = coefficient_of_variation > 0.6  # Detect early imbalance
+
+        # Progressive thresholds for graduated intervention
+        moderate_imbalance = min_action_freq < (self.min_action_freq_threshold * 2.0)  # 2x threshold for early warning
+        severe_imbalance_early = min_action_freq < (self.min_action_freq_threshold * 1.5)  # 1.5x for aggressive intervention
+
+        # DEBUG: Enhanced detailed analysis
+        print(f"[DEBUG] Advanced collapse analysis:")
         print(f"[DEBUG] - action_frequencies: {action_frequencies}")
-        print(f"[DEBUG] - min_action_freq: {min_action_freq:.4f} (threshold: {self.min_action_freq_threshold})")
+        print(f"[DEBUG] - variance_from_uniform: {variance_from_uniform:.6f} (threshold: {max_allowed_variance:.6f})")
+        print(f"[DEBUG] - coefficient_of_variation: {coefficient_of_variation:.4f} (threshold: 0.6)")
+        print(f"[DEBUG] - high_skew (early warning): {high_skew}")
+        print(f"[DEBUG] - moderate_imbalance (2x threshold): {moderate_imbalance}")
+        print(f"[DEBUG] - severe_imbalance_early (1.5x threshold): {severe_imbalance_early}")
+        print(f"[DEBUG] - min_action_freq: {min_action_freq:.4f} (critical threshold: {self.min_action_freq_threshold})")
         print(f"[DEBUG] - max_action_freq: {max_action_freq:.4f} (threshold: {self.mode_collapse_threshold})")
         print(f"[DEBUG] - context_sensitive: {is_context_sensitive}")
         print(f"[DEBUG] - performance_score: {performance_score:.4f} (threshold: {self.performance_decline_threshold})")
@@ -597,15 +617,73 @@ class ContextAwareEntropyRegulator:
         print(f"[DEBUG] - severe_imbalance: {severe_imbalance}")
         print(f"[DEBUG] - context_insensitive: {context_insensitive}")
         print(f"[DEBUG] - performance_declining: {performance_declining}")
-        print(f"[DEBUG] - should_trigger_emergency: {severe_imbalance and (context_insensitive or performance_declining)}")
+        # Research-based critical entropy threshold: 0.1 relative entropy ratio
+        current_entropy_ratio = current_entropy / math.log(self.num_actions)
+        critical_low_entropy = current_entropy_ratio < 0.1  # Research recommendation
 
-        if severe_imbalance and (context_insensitive or performance_declining):
+        print(f"[DEBUG] - current_entropy_ratio: {current_entropy_ratio:.4f} (critical threshold: 0.1)")
+        print(f"[DEBUG] - critical_low_entropy: {critical_low_entropy}")
+
+        # Advanced Multi-tier Intervention System
+        # Tier 1: Early Warning (Gentle Intervention)
+        early_warning_triggers = [
+            high_skew and not is_context_sensitive,  # Distribution becoming skewed + context insensitive
+            moderate_imbalance and performance_declining,  # Moderate imbalance + declining performance
+            variance_from_uniform > max_allowed_variance,  # High variance from uniform distribution
+        ]
+        early_warning_active = any(early_warning_triggers)
+
+        # Tier 2: Urgent Intervention (Medium Boost)
+        urgent_triggers = [
+            severe_imbalance_early,  # 1.5x threshold breach
+            coefficient_of_variation > 0.8,  # Very high skew
+            current_entropy_ratio < 0.2,  # Moderate entropy crisis
+        ]
+        urgent_intervention_needed = any(urgent_triggers)
+
+        # Tier 3: Emergency Intervention (Maximum Boost)
+        emergency_triggers = [
+            (severe_imbalance and (context_insensitive or performance_declining)),
+            critical_low_entropy,  # Research-based critical entropy threshold
+        ]
+        emergency_intervention_needed = any(emergency_triggers)
+
+        print(f"[DEBUG] - early_warning_active: {early_warning_active} (triggers: {early_warning_triggers})")
+        print(f"[DEBUG] - urgent_intervention_needed: {urgent_intervention_needed} (triggers: {urgent_triggers})")
+        print(f"[DEBUG] - emergency_intervention_needed: {emergency_intervention_needed} (triggers: {emergency_triggers})")
+
+        # Execute interventions with graduated response
+        if emergency_intervention_needed:
             self.emergency_mode = True
-            collapse_reason = "under_representation" if under_representation else "over_concentration"
+            if critical_low_entropy:
+                collapse_reason = f"critical_low_entropy_ratio_{current_entropy_ratio:.3f}"
+                reason = f'EMERGENCY: Critical entropy collapse {current_entropy_ratio:.3f} < 0.1 (研究建议紧急干预)'
+            else:
+                collapse_reason = "severe_under_representation" if severe_imbalance else "over_concentration"
+                reason = f'EMERGENCY: Severe imbalance detected (min={min_action_freq:.3f}, context_insensitive={context_insensitive})'
+
             return {
                 'should_adjust': True,
-                'reason': f'Emergency: {collapse_reason} mode collapse (min_freq={min_action_freq:.3f}, max_freq={max_action_freq:.3f}, context_insensitive={context_insensitive}, declining_perf={performance_declining})',
-                'adjustment_factor': self.emergency_boost_factor,
+                'reason': reason,
+                'adjustment_factor': self.emergency_boost_factor,  # Max boost (10.0)
+                'old_entropy_coef': self.current_entropy_coef
+            }
+
+        elif urgent_intervention_needed:
+            reason = f'URGENT: Distribution imbalance (early_severe={severe_imbalance_early}, cv={coefficient_of_variation:.3f}, entropy_ratio={current_entropy_ratio:.3f})'
+            return {
+                'should_adjust': True,
+                'reason': reason,
+                'adjustment_factor': self.emergency_boost_factor * 0.6,  # Medium boost (6.0)
+                'old_entropy_coef': self.current_entropy_coef
+            }
+
+        elif early_warning_active:
+            reason = f'EARLY_WARNING: Preventing collapse (skew={high_skew}, moderate_imbalance={moderate_imbalance}, variance={variance_from_uniform:.4f})'
+            return {
+                'should_adjust': True,
+                'reason': reason,
+                'adjustment_factor': self.emergency_boost_factor * 0.3,  # Gentle boost (3.0)
                 'old_entropy_coef': self.current_entropy_coef
             }
 
@@ -634,7 +712,7 @@ class ContextAwareEntropyRegulator:
         # Allow natural decay if performance is stable/improving and context-sensitive
         if plateau_detected and is_context_sensitive and (is_stable or is_improving):
             current_entropy_ratio = current_entropy / math.log(self.num_actions)
-            if current_entropy_ratio > 0.3 and self.current_entropy_coef > self.entropy_min:
+            if current_entropy_ratio > 0.1 and self.current_entropy_coef > self.entropy_min:
                 return {
                     'should_adjust': True,
                     'reason': 'Natural decay: stable performance with context sensitivity',

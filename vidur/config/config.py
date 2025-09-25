@@ -978,7 +978,7 @@ class PPOGlobalSchedulerModularConfig(PPOGlobalSchedulerOnlineConfig):
         metadata={"help": "Threshold for detecting mode collapse (max action frequency)."},
     )
     context_min_action_freq_threshold: float = field(
-        default=0.08,
+        default=0.01,
         metadata={"help": "Minimum frequency threshold per action for load balancing (critical for detecting under-representation)."},
     )
     context_sensitivity_threshold: float = field(
@@ -990,7 +990,7 @@ class PPOGlobalSchedulerModularConfig(PPOGlobalSchedulerOnlineConfig):
         metadata={"help": "Threshold for significant performance decline detection."},
     )
     context_emergency_boost_factor: float = field(
-        default=2.0,
+        default=10.0,
         metadata={"help": "Factor to boost entropy coefficient in emergency mode."},
     )
     context_gentle_adjustment_rate: float = field(
@@ -998,7 +998,7 @@ class PPOGlobalSchedulerModularConfig(PPOGlobalSchedulerOnlineConfig):
         metadata={"help": "Rate for gentle entropy coefficient adjustments."},
     )
     context_intervention_cooldown: int = field(
-        default=50,
+        default=3,
         metadata={"help": "Minimum steps between entropy interventions."},
     )
     context_min_samples_for_analysis: int = field(

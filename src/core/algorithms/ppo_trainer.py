@@ -337,6 +337,13 @@ class PPOTrainer:
                 badv = adv[j]
                 bm = masks[j]
 
+                # Research-recommended mini-batch advantage normalization
+                # 双极坍塌问题深度研究文档: advantages = (advantages - mean) / (std + 1e-8)
+                if badv.numel() > 1:  # Only normalize if we have multiple advantages
+                    badv_mean = badv.mean()
+                    badv_std = badv.std(unbiased=False) + 1e-8
+                    badv = (badv - badv_mean) / badv_std
+
                 # Initialize hidden states for minibatch
                 # Simplified: each sample starts from same initial hxs
                 with torch.no_grad():

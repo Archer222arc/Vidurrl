@@ -28,6 +28,7 @@ from src.core.algorithms import PPOTrainer, RolloutBuffer
 from src.core.algorithms.rewards import RewardCalculator
 from src.core.algorithms.curriculum_manager import CurriculumManager
 from src.core.utils import RunningNormalizer, TemperatureController
+from src.core.utils.normalizers import VecNormalize
 from src.core.utils.monitoring import TensorBoardMonitor, MetricsExporter
 from src.core.utils.monitoring.tail_latency_monitor import TailLatencyMonitor, TailLatencyAggregator
 from src.core.utils.infrastructure.checkpoints import CheckpointManager
@@ -146,8 +147,21 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
 
         self._device = "cpu"
 
-        # Initialize modular components
-        self._norm = RunningNormalizer(eps=1e-6, clip=5.0)
+        # Initialize VecNormalize for comprehensive state and reward normalization
+        # 基于PPO双极坍塌文档的最佳实践配置
+        self._vec_norm = VecNormalize(
+            obs_eps=1e-8,
+            obs_clip=10.0,  # 文档推荐范围[-10, 10]
+            reward_eps=1e-8,
+            reward_clip=10.0,
+            gamma=float(gcfg.gamma),  # 使用PPO discount factor
+            norm_reward=True,  # 启用奖励归一化
+            norm_obs=True,     # 启用观测归一化
+            min_count=10       # 防过早归一化
+        )
+
+        # 保持向后兼容的单一观测normalizer (用于checkpoint加载)
+        self._norm = self._vec_norm.obs_rms
 
         # Enhanced StateBuilder configuration - direct access
         self._enable_enhanced_features = bool(gcfg.enable_enhanced_features)
@@ -664,26 +678,14 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
                     self._needs_norm_reinit = False
                     # Load normalizer state for inference mode with existing StateBuilder
                     normalizer_state = checkpoint_data["normalizer_state"]
-                    self._norm.eps = normalizer_state["eps"]
-                    self._norm.clip = normalizer_state["clip"]
-                    self._norm.count = normalizer_state["count"]
-                    if normalizer_state["mean"] is not None:
-                        self._norm.mean = np.array(normalizer_state["mean"])
-                    if normalizer_state["m2"] is not None:
-                        self._norm.m2 = np.array(normalizer_state["m2"])
+                    self._vec_norm.load_state_dict(normalizer_state)
             else:
                 # Load model state into existing network (training mode)
                 self._ac.load_state_dict(checkpoint_data["model_state_dict"])
 
                 # Load normalizer state for training mode
                 normalizer_state = checkpoint_data["normalizer_state"]
-                self._norm.eps = normalizer_state["eps"]
-                self._norm.clip = normalizer_state["clip"]
-                self._norm.count = normalizer_state["count"]
-                if normalizer_state["mean"] is not None:
-                    self._norm.mean = np.array(normalizer_state["mean"])
-                if normalizer_state["m2"] is not None:
-                    self._norm.m2 = np.array(normalizer_state["m2"])
+                self._vec_norm.load_state_dict(normalizer_state)
 
             # Load training state
             training_state = checkpoint_data.get("training_state", {})
@@ -803,8 +805,8 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             self._current_time,
             self._metric_store,
         )
-        self._norm.update(s_np)
-        s_norm = self._norm.normalize(s_np)
+        self._vec_norm.update_obs(s_np)
+        s_norm = self._vec_norm.normalize_obs(s_np)
         s = torch.from_numpy(s_norm).float().unsqueeze(0).to(self._device)  # (1, D)
 
         if self._debug_dump:
@@ -938,7 +940,10 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
 
             # Update buffer with previous step's reward
             if self._buf.ptr > 0 and self._buf.ptr <= self._rollout_len:
-                self._buf.r[-1] = float(r)
+                # Apply reward normalization using VecNormalize
+                is_episode_done = not mask.item()  # mask=False means episode done
+                normalized_reward = self._vec_norm.normalize_reward(float(r), done=is_episode_done)
+                self._buf.r[-1] = normalized_reward
                 self._buf.masks[-1] = float(mask.item())
 
             # Compute dynamic temperature for exploration control
@@ -1120,6 +1125,11 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         if self._tb_monitor.is_active() or self._metrics_exporter.enabled:
             with torch.no_grad():
                 r_hist = np.asarray(self._buf.r, dtype=np.float32)
+
+                # Update adaptive normalization based on reward performance
+                current_performance_metric = float(np.mean(r_hist)) if len(r_hist) > 0 else 0.0
+                self._vec_norm.adaptive_update(current_performance_metric)
+
                 rollout_stats = {
                     "reward_mean": float(np.mean(r_hist)),
                     "reward_std": float(np.std(r_hist)),
@@ -1128,6 +1138,9 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
                     "value_mean": float(v_t.mean().item()),
                     "return_mean": float(ret_t.mean().item()),
                     "advantage_std": float(adv_t.std(unbiased=False).item()),
+                    # VecNormalize statistics for monitoring normalization health
+                    "obs_norm_count": self._vec_norm.obs_rms.count,
+                    "reward_norm_count": self._vec_norm.reward_rms.count,
                 }
 
                 # Action distribution
@@ -1235,7 +1248,7 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
             self._checkpoint_manager.save_checkpoint(
                 step=self._step,
                 actor_critic=self._ac,
-                normalizer=self._norm,
+                normalizer=self._vec_norm,
                 training_state=training_state,
                 metadata=metadata,
             )
@@ -1370,8 +1383,8 @@ class PPOGlobalSchedulerModular(BaseGlobalScheduler):
         )
 
         # Update normalizer with new state observations
-        self._norm.update(s_np)
-        s_norm = self._norm.normalize(s_np)
+        self._vec_norm.update_obs(s_np)
+        s_norm = self._vec_norm.normalize_obs(s_np)
 
         # 2) Calculate reward to update reward statistics
         raw_throughput = float(self._metric_store.get_throughput(self._current_time))
