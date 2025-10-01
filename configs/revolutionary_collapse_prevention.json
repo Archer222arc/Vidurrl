@@ -1,7 +1,9 @@
 {
-  "description": "Revolutionary PPO Collapse Prevention Configuration",
-  "version": "3.0.0",
-  "stability_level": "revolutionary",
+  "description": "Revolutionary PPO Collapse Prevention Configuration - Amplified Signal",
+  "version": "3.2.0",
+  "stability_level": "signal_amplification",
+  "optimization_date": "2025-10-01",
+  "_optimization_summary": "Amplified reward signal for 1s latency optimization space: 5x latency weight, disabled all forced interventions",
   "based_on_analysis": {
     "collapse_pattern": "CV: 0.228 → 1.317 → 1.627 → 1.697",
     "reward_degradation": "-4.29 → -11.24",
@@ -11,25 +13,87 @@
 
   "training": {
     "num_replicas": 4,
-    "ppo_requests": 5000,
-    "qps": 3,
-    "max_steps": 1000
+    "training_steps": 50000,
+    "qps": 3
+  },
+
+  "training_schedule": {
+    "total_steps": 50000,
+    "rollout_length": 256,
+
+    "training_phases": {
+      "_comment_phases": "3-stage training: exploration → balance → convergence",
+      "exploration_ratio": 0.3,
+      "_comment_exploration": "0-30% (0-15000步): High entropy, learn basics, high expert guidance",
+      "balance_ratio": 0.5,
+      "_comment_balance": "30-80% (15000-40000步): Balanced exploration/exploitation, moderate expert guidance",
+      "convergence_ratio": 0.2,
+      "_comment_convergence": "80-100% (40000-50000步): Low entropy, fine-tune, low expert guidance",
+
+      "_comment_history_shortcut_weights": "Stage-based shortcut gate weights for history augmentation",
+      "history_shortcut_weights": {
+        "exploration_phase": 0.5,
+        "_comment_exploration": "Reduced from 0.95 to 0.5 - allow state-based learning even in exploration",
+
+        "balance_phase": 0.3,
+        "_comment_balance": "Reduced from 0.6 to 0.3 - emphasize state-aware decisions",
+
+        "convergence_phase": 0.1,
+        "_comment_convergence": "Reduced from 0.3 to 0.1 - minimal round-robin shortcut, rely on learned policy"
+      }
+    },
+
+    "analysis_windows": {
+      "rollout_based": 1.0,
+      "short_term": 0.2,
+      "medium_term": 0.8,
+      "long_term": 2.0,
+      "immediate": 0.04
+    },
+
+    "monitoring_frequencies": {
+      "primary": 10,
+      "secondary": 5,
+      "emergency": 2,
+      "cleanup": 5,
+      "gradient_check": 5
+    }
   },
 
   "ppo_config": {
-    "lr": 0.0001,
+    "lr": 0.0004,
+    "_comment_lr": "Increased from 3e-4 to 4e-4 for faster learning",
     "gamma": 0.99,
     "gae_lambda": 0.95,
-    "clip_ratio": 0.1,
+    "clip_ratio": 0.3,
+    "_comment_clip": "Increased from 0.2 to 0.3 to reduce clip fraction from 88% to 30-50%",
     "clip_range_vf": 0.2,
-    "epochs": 2,
-    "rollout_len": 256,
-    "minibatch_size": 64,
-    "entropy_coef": 0.02,
+    "epochs": 12,
+    "_comment_epochs": "Increased from 8 to 12 for better value function training (target ExplainedVar > 0.6)",
+    "rollout_len": "#{training_schedule.rollout_length}",
+    "minibatch_size": 128,
+    "_comment_minibatch": "Increased from 64 to 128 for more stable gradient estimates",
+    "entropy_coef": 0.01,
     "entropy_warmup_coef": 1.0,
-    "stabilization_steps": 100,
-    "max_grad_norm": 0.5,
+    "stabilization_steps": 0,
+    "max_grad_norm": 0.8,
+    "_comment_max_grad_norm": "Increased from 0.5 to 0.8 to prevent gradient clipping (was 300+ norm → compressed to 0.5)",
     "value_coef": 0.5,
+    "_comment_value_coef": "CRITICAL FIX: Reduced from 1.5 to fix vf_loss=38.66 issue",
+
+    "learning_rate_schedule": {
+      "enable_warmup": true,
+      "warmup_steps": "#{training_schedule.total_steps * training_schedule.training_phases.exploration_ratio}",
+      "_comment_warmup": "Use exploration phase duration (30% = 15000 steps) for LR warmup",
+      "initial_lr_ratio": 0.4,
+      "_comment_initial_ratio": "Increased from 0.1 to 0.4 - start from 1.6e-4 instead of 4e-5",
+      "schedule_type": "cosine",
+      "_comment_schedule_type": "Changed from linear to cosine for smoother decay",
+      "cooldown_enable": false,
+      "_comment_cooldown": "DISABLED - was causing LR to decay to near-zero, preventing learning",
+      "cooldown_steps": "#{training_schedule.total_steps * training_schedule.training_phases.convergence_ratio}",
+      "final_lr_ratio": 0.1
+    },
 
     "revolutionary_features": {
       "use_gradient_preserving": true,
@@ -43,7 +107,7 @@
         "max_gradient_norm": 10.0,
         "emergency_boost_factor": 100.0,
         "use_spectral_norm": true,
-        "monitor_frequency": 10,
+        "monitor_frequency": "#{training_schedule.monitoring_frequencies.primary}",
         "injection_strength": 0.01
       }
     }
@@ -55,27 +119,68 @@
       "scheduler_type": "ppo_global_scheduler_modular",
       "gamma": 0.99,
 
+      "reward_clip": 5.0,
+      "_comment_reward_clip": "CRITICAL FIX: Increased from 0.5 to allow full reward signal",
+      "returns_clip": 25.0,
+      "_comment_returns_clip": "Increased returns clipping range",
+      "enable_expert_guidance": true,
+      "expert_guidance_weight": 0.5,
+      "_comment_expert_weight": "Reduced from 1.5 to 0.5 - allow policy to deviate from round-robin for latency optimization",
+      "enable_simplified_reward": true,
+      "simplified_reward_performance_weight": 0.05,
+      "_comment_performance": "Drastically reduced - optimization space is small (1s), focus purely on latency",
+      "simplified_reward_imbalance_weight": 0.05,
+      "_comment_imbalance": "Drastically reduced - allow any distribution that improves latency",
+      "simplified_reward_latency_weight": 5.0,
+      "_comment_latency": "MASSIVELY increased from 1.5 to 5.0 - amplify weak reward signal for 1s optimization space",
+      "simplified_reward_exploration_bonus": 0.25,
+      "simplified_reward_use_delta": true,
+      "simplified_reward_delta_weight": 0.3,
+      "_comment_delta": "Reduced from 0.4 for stability",
+      "simplified_reward_enable_exploration_decay": true,
+      "simplified_reward_exploration_initial": 0.1,
+      "_comment_exploration_initial": "Reduced from 0.25",
+      "simplified_reward_exploration_final": 0.02,
+      "simplified_reward_exploration_decay_steps": "#{training_schedule.total_steps * 0.8}",
+      "simplified_reward_baseline_enable": true,
+      "_comment_baseline": "CRITICAL for latency-focused optimization - makes negative penalties interpretable",
+      "simplified_reward_baseline_value": 5,
+      "_comment_baseline_value": "Initial value: raw_reward范围[-2.5,-1.2], baseline=1.8使均值≈-0.05 (slightly negative bias OK)",
+      "simplified_reward_adaptive_baseline": false,
+      "_comment_adaptive": "DISABLED - adaptive baseline caused runaway growth to 79.4, causing vf_loss explosion",
+      "simplified_reward_baseline_update_rate": 0.01,
+      "_comment_update_rate": "Not used when adaptive_baseline=false",
+      "simplified_reward_target_reward_mean": 0.0,
+      "_comment_target": "Not used when adaptive_baseline=false",
+
       "enhanced_collapse_detection": {
-        "enable": true,
-        "cv_warning_threshold": 0.3,
-        "cv_emergency_threshold": 0.8,
+        "enable": false,
+        "_comment_enable": "DISABLED - emergency interventions (25 times) prevent convergence in small optimization space",
+        "cv_warning_threshold": 0.4,
+        "_comment_cv_warning": "Not used when disabled",
+        "cv_emergency_threshold": 1.0,
+        "_comment_cv_emergency": "Not used when disabled",
         "min_action_freq_threshold": 0.15,
         "gradient_norm_threshold": 1e-6,
         "entropy_collapse_threshold": 0.1,
-        "emergency_entropy_boost": 20.0,
-        "forced_exploration_steps": 50,
-        "intervention_cooldown": 10,
-        "detection_window": 20,
-        "history_window": 100,
+        "emergency_entropy_boost": 8.0,
+        "_comment_emergency_boost": "Reduced from 20.0 to 8.0 to prevent excessive intervention",
+        "forced_exploration_steps": "#{training_schedule.rollout_length * training_schedule.analysis_windows.short_term}",
+        "intervention_cooldown": 20,
+        "_comment_intervention_cooldown": "Increased from 10 to 20 to reduce intervention frequency",
+        "detection_window": "#{training_schedule.rollout_length * training_schedule.analysis_windows.immediate}",
+        "history_window": "#{training_schedule.rollout_length * training_schedule.analysis_windows.short_term}",
         "enable_adaptive_thresholds": true,
         "performance_decline_threshold": -0.1
       },
 
       "action_balance_enable": true,
-      "action_balance_weight": 0.5,
-      "action_balance_window": 50,
+      "action_balance_weight": 0.3,
+      "_comment_balance_weight": "Reduced from 0.8 to 0.3 - allow non-uniform action distribution",
+      "action_balance_window": "#{training_schedule.rollout_length * training_schedule.analysis_windows.short_term}",
 
-      "context_aware_entropy_enable": true,
+      "context_aware_entropy_enable": false,
+      "_comment_context_entropy": "DISABLED - forced entropy interventions prevent fine-tuning for 1s optimization",
       "context_entropy_min": 0.005,
       "context_entropy_max": 0.5,
       "context_target_entropy_ratio": 0.6,
@@ -85,10 +190,63 @@
       "context_performance_decline_threshold": -0.05,
       "context_emergency_boost_factor": 20.0,
       "context_gentle_adjustment_rate": 0.02,
-      "context_intervention_cooldown": 5,
-      "context_min_samples_for_analysis": 50,
-      "context_analysis_window": 200,
+      "context_intervention_cooldown": "#{training_schedule.monitoring_frequencies.secondary}",
+      "context_min_samples_for_analysis": "#{training_schedule.rollout_length * training_schedule.analysis_windows.short_term}",
+      "context_analysis_window": "#{training_schedule.rollout_length * training_schedule.analysis_windows.medium_term}",
       "context_state_discretization_bins": 10,
+
+      "staged_entropy_control": {
+        "enable": true,
+        "mode": "performance_guided",
+        "prevent_monotonic_growth": true,
+        "baseline_aware": true,
+
+        "entropy_bounds": {
+          "floor": 0.03,
+          "_comment_floor": "Reduced from 0.05 - allow lower entropy for fine-tuning 1s optimization",
+          "ceiling": 0.4,
+          "_comment_ceiling": "Reduced from 0.6 - limit exploration in small optimization space",
+          "target": 0.15,
+          "_comment_target": "Reduced from 0.25 - encourage convergence for precise latency optimization",
+          "convergence_floor": 0.05
+        },
+
+        "training_stages": {
+          "exploration_phase": {
+            "steps_range": [0, "#{training_schedule.total_steps * training_schedule.training_phases.exploration_ratio}"],
+            "entropy_weight_multiplier": 2,
+            "temperature_base": 0.8,
+            "intervention_sensitivity": 0.8
+          },
+          "balance_phase": {
+            "steps_range": ["#{training_schedule.total_steps * training_schedule.training_phases.exploration_ratio}", "#{training_schedule.total_steps * (training_schedule.training_phases.exploration_ratio + training_schedule.training_phases.balance_ratio)}"],
+            "entropy_weight_multiplier": 1.0,
+            "temperature_base": 0.5,
+            "intervention_sensitivity": 1.0
+          },
+          "convergence_phase": {
+            "steps_range": ["#{training_schedule.total_steps * (training_schedule.training_phases.exploration_ratio + training_schedule.training_phases.balance_ratio)}", "#{training_schedule.total_steps}"],
+            "entropy_weight_multiplier": 0.7,
+            "temperature_base": 0.3,
+            "intervention_sensitivity": 1.3
+          }
+        },
+
+        "performance_guidance": {
+          "performance_window": "#{training_schedule.rollout_length * training_schedule.analysis_windows.medium_term * 0.75}",
+          "stable_performance_threshold": 0.2,
+          "good_performance_threshold": -0.3,
+          "convergence_decay_rate": 0.998,
+          "recovery_boost_factor": 1.1
+        },
+
+        "threshold_adjustments": {
+          "min_action_freq_relaxed": 0.12,
+          "mode_collapse_tightened": 0.25,
+          "emergency_only_critical": true,
+          "context_sensitivity_required": true
+        }
+      },
 
       "dynamic_reward_system": {
         "enable": true,
@@ -97,22 +255,26 @@
         "target_reward_range": [-2.0, 2.0],
         "normalization_rate": 0.05,
         "emergency_boost_strength": 3.0,
-        "emergency_boost_duration": 100,
+        "emergency_boost_duration": "#{training_schedule.rollout_length * training_schedule.analysis_windows.short_term * 2}",
         "adaptive_objective_weights": true,
         "objective_weights": {
-          "throughput": 1.0,
-          "latency": 1.5,
-          "fairness": 2.0,
-          "balance": 3.0
+          "throughput": 0.5,
+          "_comment_throughput": "Reduced from 1.0 - not critical in 1s optimization space",
+          "latency": 5.0,
+          "_comment_latency": "MASSIVELY increased from 2.0 to 5.0 - pure latency optimization focus",
+          "fairness": 0.5,
+          "_comment_fairness": "Reduced from 2.0 - allow unfairness for latency gains",
+          "balance": 0.5,
+          "_comment_balance": "Reduced from 1.5 to 0.5 - completely allow imbalance for latency"
         }
       }
     }
   },
 
   "revolutionary_monitoring": {
-    "primary_detection_frequency": 10,
-    "secondary_check_frequency": 5,
-    "emergency_monitoring_frequency": 2,
+    "primary_detection_frequency": "#{training_schedule.monitoring_frequencies.primary}",
+    "secondary_check_frequency": "#{training_schedule.monitoring_frequencies.secondary}",
+    "emergency_monitoring_frequency": "#{training_schedule.monitoring_frequencies.emergency}",
 
     "early_warning_thresholds": {
       "cv_yellow": 0.25,
@@ -134,10 +296,10 @@
     },
 
     "monitoring_windows": {
-      "immediate_response": 10,
-      "short_term_trend": 50,
-      "medium_term_analysis": 200,
-      "long_term_stability": 500
+      "immediate_response": "#{training_schedule.rollout_length * training_schedule.analysis_windows.immediate}",
+      "short_term_trend": "#{training_schedule.rollout_length * training_schedule.analysis_windows.short_term}",
+      "medium_term_analysis": "#{training_schedule.rollout_length * training_schedule.analysis_windows.medium_term}",
+      "long_term_stability": "#{training_schedule.rollout_length * training_schedule.analysis_windows.long_term}"
     },
 
     "automatic_interventions": {
@@ -158,19 +320,76 @@
     "gru_layers": 3,
     "use_stabilized_gru": true,
 
+    "history_augmentation": {
+      "enable": true,
+      "architecture": "dual_stream_with_shortcut",
+      "_comment_architecture": "Options: dual_stream_with_shortcut, simple_concat, attention_based",
+
+      "history_length": 10,
+      "_comment_history_length": "Number of past actions to track (10 for 4 replicas = 2.5 full round-robin cycles)",
+
+      "dimensions": {
+        "history_embed_dim": 64,
+        "_comment_history_embed_dim": "Embedding dimension for action history (64 = hidden_size/6)",
+
+        "history_lstm_hidden": 128,
+        "_comment_history_lstm_hidden": "LSTM hidden dimension for history processing (128 = hidden_size/3)",
+
+        "history_proj_dim": 384,
+        "_comment_history_proj_dim": "Projection to match hidden_size for fusion (must equal hidden_size)",
+
+        "fusion_gate_hidden": 192,
+        "_comment_fusion_gate_hidden": "Gated fusion mechanism hidden dimension (192 = hidden_size/2)",
+
+        "shortcut_hidden": 256,
+        "_comment_shortcut_hidden": "Shortcut path hidden dimension (256 = action_dim * 2.5)",
+
+        "state_stream_layers": 2,
+        "_comment_state_stream_layers": "Number of MLP layers in state processing stream",
+
+        "history_lstm_layers": 1,
+        "_comment_history_lstm_layers": "Number of LSTM layers for history processing"
+      },
+
+      "fusion_config": {
+        "enable_gated_fusion": true,
+        "_comment_enable_gated_fusion": "Use learned gate to balance state vs history streams",
+
+        "enable_residual_connection": true,
+        "_comment_enable_residual_connection": "Add residual connection from state stream",
+
+        "dropout": 0.1,
+        "_comment_dropout": "Dropout rate for regularization"
+      },
+
+      "shortcut_config": {
+        "enable_shortcut": true,
+        "_comment_enable_shortcut": "Enable direct history→action shortcut path",
+
+        "enable_stage_based_weighting": true,
+        "_comment_enable_stage_based_weighting": "Use training stage-specific shortcut weights",
+
+        "static_shortcut_weight": 0.5,
+        "_comment_static_shortcut_weight": "Used when stage_based_weighting is disabled",
+
+        "use_learned_gate": true,
+        "_comment_use_learned_gate": "Learn to dynamically weight shortcut vs main path"
+      }
+    },
+
     "stabilization": {
       "enable_layer_normalization": true,
       "enable_hyperspherical_normalization": true,
       "input_normalization_momentum": 0.99,
       "observation_clip": 10.0,
-      "reward_clip": 10.0,
+      "_comment_reward_clip_moved": "reward_clip is now configured in global_scheduler_config (line 95)",
       "running_mean_std_momentum": 0.99,
       "norm_epsilon": 1e-8
     },
 
     "gradient_health_monitoring": {
       "enable": true,
-      "check_frequency": 5,
+      "check_frequency": "#{training_schedule.monitoring_frequencies.gradient_check}",
       "vanishing_threshold": 1e-7,
       "explosion_threshold": 100.0,
       "emergency_scaling": true
@@ -181,11 +400,12 @@
     "mode": "hybrid",
     "latency_weight": 1.0,
     "balance_penalty_weight": 2.0,
-    "latency_threshold": 1.5,
+    "latency_threshold": 10.0,
     "latency_penalty_scale": 3.0,
     "load_balance_penalty": 0.1,
 
-    "throughput_target": 10.0,
+    "throughput_target": 3.5,
+    "latency_target": 8.0,
     "absolute_weight": 0.6,
     "delta_weight": 0.4,
     "alpha": 0.4,
@@ -195,9 +415,54 @@
     "sigma": 1.2,
     "ema_alpha": 0.15,
 
+    "reward_baseline": {
+      "enable": true,
+      "baseline_value": 2.0,
+      "adaptive_baseline": false,
+      "baseline_update_rate": 0.01,
+      "target_reward_mean": 0.0
+    },
+
+    "stability_reward": {
+      "enable_stability_reward": true,
+      "rollout_len": "#{training_schedule.rollout_length}",
+      "stability_weight": 0.8,
+      "stability_threshold": 0.2,
+      "max_stability_bonus": 1.0,
+      "max_stability_penalty": 0.5,
+      "enable_multi_rollout_consistency": true,
+      "consistency_rollouts": 3,
+      "fallback_window": "#{training_schedule.rollout_length * training_schedule.analysis_windows.short_term}",
+      "stability_ema_alpha": 0.1
+    },
+
+    "adaptive_entropy_control": {
+      "enable_adaptive_entropy": true,
+      "adaptive_initial_entropy_coef": 0.05,
+      "adaptive_min_entropy_coef": 0.01,
+      "adaptive_max_entropy_coef": 0.3,
+      "adaptive_target_entropy_ratio": 0.4,
+      "adaptive_collapse_entropy_threshold": 0.05,
+      "adaptive_emergency_entropy_boost": 5.0,
+      "adaptive_performance_window": "#{training_schedule.rollout_length * training_schedule.analysis_windows.short_term}",
+      "adaptive_balance_quality_threshold": 0.3,
+      "adaptive_emergency_cooldown": "#{training_schedule.rollout_length * training_schedule.analysis_windows.short_term * 2}"
+    },
+
+    "entropy_control_manager": {
+      "control_strategy": "adaptive",
+      "fallback_strategy": "staged",
+      "enable_comparison": false,
+      "migration_mode": false,
+      "migration_steps": "#{training_schedule.total_steps * training_schedule.training_phases.exploration_ratio * 0.1}",
+      "_comment_migration_steps": "Use 10% of exploration phase for migration (1500 steps)",
+      "enable_deprecation_warnings": true
+    },
+
+
     "asymmetric_penalties": {
       "use_asymmetric_penalties": true,
-      "false_positive_penalty": 10.0,
+      "false_positive_penalty": 5.0,
       "over_provision_factor": 0.05,
       "beta_exploration_enable": true,
       "temporal_tracking_enable": true
@@ -205,10 +470,10 @@
 
     "progressive_penalty_system": {
       "enable": true,
-      "cv_scale_factor": 3.0,
-      "penalty_cap": 20.0,
-      "emergency_multiplier": 10.0,
-      "baseline_tracking_window": 100
+      "cv_scale_factor": 2.0,
+      "penalty_cap": 10.0,
+      "emergency_multiplier": 5.0,
+      "baseline_tracking_window": "#{training_schedule.rollout_length * training_schedule.analysis_windows.short_term}"
     }
   },
 
@@ -219,7 +484,8 @@
     "kl_coef": 0.3,
     "kl_ref_coef_initial": 0.8,
     "kl_ref_coef_final": 0.1,
-    "kl_ref_decay_steps": 2000,
+    "kl_ref_decay_steps": "#{training_schedule.total_steps * training_schedule.training_phases.exploration_ratio}",
+    "_comment_kl_decay": "Decay KL ref coefficient during exploration phase (15000 steps)",
     "warmup_steps": 200,
 
     "entropy_threshold_penalty": {
@@ -240,7 +506,7 @@
       "use_intrinsic_motivation": true,
       "intrinsic_reward_coef": 0.2,
       "curiosity_decay": 0.995,
-      "exploration_anneal_steps": 100000
+      "exploration_anneal_steps": "#{training_schedule.total_steps * 2.0}"
     },
 
     "gradient_monitoring": {
@@ -248,7 +514,7 @@
       "log_entropy": true,
       "log_kl_divergence": true,
       "abort_on_nan": true,
-      "nan_check_frequency": 10
+      "nan_check_frequency": "#{training_schedule.monitoring_frequencies.primary}"
     },
 
     "emergency_protocols": {
@@ -272,20 +538,20 @@
       "enable": true,
       "cv_trigger_threshold": 0.5,
       "emergency_temperature": 3.0,
-      "emergency_duration": 50
+      "emergency_duration": "#{training_schedule.rollout_length * training_schedule.analysis_windows.short_term}"
     }
   },
 
   "enhanced_features": {
-    "enable_enhanced_features": true,
-    "state_history_window": 20,
-    "qps_window": 50,
+    "enable_enhanced_features": false,
+    "state_history_window": "#{training_schedule.rollout_length}",
+    "qps_window": "#{training_schedule.rollout_length}",
 
     "forced_exploration": {
       "enable": true,
       "exploration_probability": 0.3,
       "trigger_cv": 0.4,
-      "duration": 50,
+      "duration": "#{training_schedule.total_steps * 0.06}",
       "decay_rate": 0.98
     }
   },
@@ -297,9 +563,9 @@
 
   "checkpointing": {
     "enable_checkpoints": true,
-    "checkpoint_dir": "outputs/checkpoints",
-    "checkpoint_interval": 64,
-    "max_checkpoints": 10,
+    "checkpoint_dir": "/Users/ruicheng/Documents/GitHub/Vidur/Vidur_arc2/outputs/checkpoints",
+    "checkpoint_interval": "#{training_schedule.rollout_length}",
+    "max_checkpoints": 5,
     "save_on_collapse_detection": true,
     "auto_recovery": true
   },
@@ -307,8 +573,8 @@
   "monitoring": {
     "tensorboard_port": 6006,
     "metrics_export_format": "csv",
-    "metrics_export_interval": 50,
-    "metrics_subsamples": 2000,
+    "metrics_export_interval": "#{training_schedule.monitoring_frequencies.primary * 5}",
+    "metrics_subsamples": "#{training_schedule.rollout_length * training_schedule.analysis_windows.long_term * 4}",
 
     "collapse_prevention_logging": {
       "enable": true,
@@ -321,12 +587,12 @@
     "tail_latency_tracking": {
       "enable": true,
       "alert_threshold_p99": 2.0,
-      "window_size": 500
+      "window_size": "#{training_schedule.rollout_length}"
     },
 
     "real_time_dashboard": {
       "enable": true,
-      "update_frequency": 10,
+      "update_frequency": "#{training_schedule.monitoring_frequencies.primary}",
       "display_metrics": [
         "coefficient_variation",
         "action_distribution",
@@ -336,6 +602,48 @@
         "intervention_count"
       ]
     }
+  },
+
+  "metrics_config": {
+    "write_metrics": true,
+    "write_json_trace": false,
+    "store_plots": false,
+    "store_request_metrics": true,
+    "store_batch_metrics": true,
+    "store_utilization_metrics": true,
+    "store_operation_metrics": true,
+    "store_token_completion_metrics": true,
+    "keep_individual_batch_metrics": true,
+    "save_table_to_wandb": false,
+    "subsamples": 512,
+
+    "enable_rollout_cleanup": true,
+    "rollout_cleanup_interval": "#{training_schedule.monitoring_frequencies.cleanup}",
+    "enable_partial_cleanup": true,
+    "partial_cleanup_ratio": 0.5,
+
+    "memory_management": {
+      "enable_memory_manager": true,
+      "threshold_gb": 3.0,
+      "check_interval": "#{training_schedule.monitoring_frequencies.primary * 2}",
+      "tensor_threshold": 50000,
+      "enable_auto_cleanup": true,
+      "python_object_thresholds": {
+        "list_threshold": 100000,
+        "dict_threshold": 100000,
+        "critical_list_threshold": 200000,
+        "critical_dict_threshold": 200000
+      },
+      "default_data_series_max_size": 100000,
+      "timeline_max_size": 10000,
+      "request_metrics_max_size": 50000,
+      "batch_metrics_max_size": 20000,
+      "operation_metrics_max_size": 30000,
+      "event_trace_max_size": 50000
+    },
+
+    "output_dir": "outputs/revolutionary_training",
+    "cache_dir": "cache"
   },
 
   "experimental_features": {

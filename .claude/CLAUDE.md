@@ -42,6 +42,306 @@ $PROJECT_NAME/                 # 项目根目录
 - `demo/`：示例代码和使用说明
 - `notebooks/`：Jupyter分析报告和可视化
 
+## 📋 模块文档管理规范 - 强制执行
+
+### 核心原则
+- **变更可追溯**：每个模块必须维护完整的演进历史
+- **废弃功能保留**：所有deprecated功能统一管理，不得直接删除
+- **版本记录标准化**：使用统一格式记录变更历史
+
+### 强制文档结构
+
+#### 1. 模块接口文档 (docs/modules/) - 长期稳定
+每个重要模块必须维护完整的接口和功能说明文档：
+```
+docs/modules/
+├── memory_management.md               # 内存管理模块完整接口文档
+├── reward_system.md                   # 奖励系统模块完整接口文档
+├── ppo_training_system.md            # PPO训练系统模块完整接口文档
+├── metrics_collection.md              # 指标收集模块完整接口文档
+└── evolution/                         # 演进历史子目录
+    ├── memory_management_evolution.md      # 内存管理模块演进史
+    ├── reward_system_evolution.md          # 奖励系统演进史
+    ├── ppo_training_system_evolution.md    # PPO训练系统演进史
+    └── metrics_collection_evolution.md     # 指标收集演进史
+```
+
+#### 2. 废弃功能文档 (docs/deprecated/)
+与模块文档一一对应，分模块管理废弃功能：
+```
+docs/deprecated/
+├── DEPRECATED_COMPONENTS.md                    # 废弃组件总览索引
+├── deprecated_memory_management.md             # 内存管理模块废弃功能
+├── deprecated_reward_system.md                 # 奖励系统模块废弃功能
+├── deprecated_ppo_training.md                  # PPO训练系统废弃功能
+└── deprecated_metrics_collection.md            # 指标收集模块废弃功能
+```
+
+#### 3. 超参数调优文档 (docs/) - 实验记录
+**位置**: `docs/hyperparameter_tuning_log.md`
+
+**职责**: 记录所有超参数实验、失败案例、经验总结
+- 每次重要实验的完整配置
+- 训练结果和关键指标
+- 失败原因分析和教训
+- 成功配置和最佳实践
+- 监控指标理想范围
+- 紧急修复方案
+
+**与演进文档的区别**:
+- **hyperparameter_tuning_log.md**: 实验导向，记录尝试过程和经验
+- **evolution/*.md**: 版本导向，记录最终采用的变更
+
+**更新时机**:
+- 每次重要训练实验后
+- 发现新的超参数问题时
+- 积累新的调参经验时
+```
+
+#### 4. 文档职责分工
+
+**模块接口文档** (docs/modules/*.md): 长期稳定，完整描述当前功能
+- 模块概述和核心功能
+- 完整的类/函数接口说明
+- 配置参数详细说明
+- 使用示例和最佳实践
+- 常见问题和排查指南
+
+**演进文档** (docs/modules/evolution/*.md): 滚动维护，记录变更历史
+- 版本变更记录（按时间线组织）
+- 新功能添加历史
+- 重构和优化记录
+- 性能改进追踪
+- 包含文件位置和具体代码变更
+
+**废弃文档** (docs/deprecated/*.md): 历史保存，追溯已移除功能
+- 废弃功能的原始实现
+- 废弃原因和替代方案
+- 迁移指南和兼容性说明
+
+**调优文档** (docs/hyperparameter_tuning_log.md): 实验记录，知识积累
+- 所有超参数实验配置和结果
+- 失败案例的根本原因分析
+- 成功经验和最佳实践总结
+- 监控指标范围和告警阈值
+- 紧急修复方案和debug路径
+
+#### 3. 变更记录格式标准
+每次模块更新必须在对应演进文档中添加记录：
+
+```markdown
+## [版本日期] - [变更类型]
+
+### 变更概述
+- **改动原因**：[详细说明为什么做这个改动]
+- **影响范围**：[列出受影响的文件和模块]
+- **向后兼容性**：[说明是否破坏兼容性]
+
+### 具体变更
+1. **新增功能**：
+   - 功能描述
+   - 文件位置：`src/path/to/file.py:123-456`
+   - 配置参数：`config.new_param`
+
+2. **修改功能**：
+   - 修改前行为：[原有功能描述]
+   - 修改后行为：[新功能描述]
+   - 文件位置：`src/path/to/file.py:123-456`
+
+3. **废弃功能**：
+   - 废弃原因：[说明为什么废弃]
+   - 替代方案：[新的实现方式]
+   - 迁移路径：[如何从旧版本迁移]
+   - 保留位置：`docs/deprecated/component_name.md`
+
+### 测试验证
+- [x] 功能测试通过
+- [x] 配置兼容性验证
+- [x] 性能无明显回退
+
+### 相关Issue/PR
+- Issue: #123
+- PR: #456
+```
+
+### 强制执行规则
+
+#### 1. 模块更新检查清单
+
+**代码变更时**:
+- [ ] **更新模块接口文档** (docs/modules/[module].md)
+  - [ ] 同步最新的类/函数接口
+  - [ ] 更新配置参数说明
+  - [ ] 更新使用示例
+  - [ ] 确保接口文档完整准确
+- [ ] **更新演进文档** (docs/modules/evolution/[module]_evolution.md)
+  - [ ] 添加版本记录（包含日期、变更类型）
+  - [ ] 记录具体变更和文件位置
+  - [ ] 说明改动原因和影响范围
+- [ ] **处理废弃功能** (如有)
+  - [ ] 将废弃功能移至docs/deprecated/
+  - [ ] 记录废弃原因和替代方案
+- [ ] **配置文件变更** (如有)
+  - [ ] 更新配置参数说明
+  - [ ] 在配置中添加_comment注释
+  - [ ] 更新文件位置索引
+- [ ] **兼容性检查**
+  - [ ] 验证向后兼容性
+  - [ ] 更新迁移指南（如不兼容）
+- [ ] **文档归档检查**
+  - [ ] 演进文档是否超过10个版本或800行
+  - [ ] 废弃文档是否超过5个功能记录
+  - [ ] 如需归档，执行pop操作并更新索引
+
+**训练实验时**:
+- [ ] **更新调优文档** (docs/hyperparameter_tuning_log.md)
+  - [ ] 记录实验配置（完整JSON片段）
+  - [ ] 记录训练结果和关键指标
+  - [ ] 分析失败原因（如失败）
+  - [ ] 总结经验教训
+  - [ ] 更新监控指标范围（如发现新阈值）
+- [ ] **更新演进文档** (如配置变更被正式采用)
+  - [ ] 将成功的配置变更记录为版本更新
+  - [ ] 关联调优文档中的实验编号
+
+#### 2. 废弃功能处理流程
+1. **标记阶段**：在代码中添加`@deprecated`注释
+2. **文档化**：在`docs/deprecated/`中创建详细文档
+3. **保留期**：至少保留2个版本周期
+4. **最终移除**：移至`archieve/`目录
+
+#### 3. 文档长度管理规范
+**文档长度限制**：
+- 演进文档：最多保留**最近10个版本**的变更记录
+- 废弃文档：最多保留**最近5个废弃功能**的详细记录
+- 单个文档：不超过**800行**或**50KB**
+
+**文档分割策略**：
+```
+docs/modules/
+├── memory_management_evolution.md           # 当前活跃演进文档
+└── archive/
+    ├── memory_management_evolution_2024.md  # 2024年历史记录
+    └── memory_management_evolution_2023.md  # 2023年历史记录
+
+docs/deprecated/
+├── deprecated_memory_management.md          # 当前废弃功能
+└── archive/
+    ├── deprecated_memory_management_2024.md # 2024年废弃功能
+    └── deprecated_memory_management_2023.md # 2023年废弃功能
+```
+
+**滚动归档流程**：
+1. **触发条件**: 文档超过长度限制或版本数限制
+2. **分割原则**: 按年份或版本数分割，从旧到新进行pop操作
+3. **归档位置**: 移至对应的`archive/`子目录
+4. **索引更新**: 在当前文档中添加历史文档链接
+
+**归档示例**：
+```markdown
+# 内存管理模块演进史
+
+## 📚 历史文档索引
+- [2024年演进记录](./archive/memory_management_evolution_2024.md)
+- [2023年演进记录](./archive/memory_management_evolution_2023.md)
+
+## 当前活跃版本 (2025年)
+
+### [2025-09-27] - 配置统一化重构
+...（最近10个版本的记录）
+```
+
+#### 5. 文档更新触发条件
+
+**必须更新演进文档**:
+- 新增核心模块或重要功能
+- 修改现有模块的核心逻辑
+- 废弃任何功能组件
+- 修改配置参数结构
+- 重构代码架构
+- **文档长度超限需要归档**
+
+**必须更新调优文档**:
+- 完成重要的训练实验（无论成功失败）
+- 发现新的超参数问题或解决方案
+- 训练出现异常需要记录教训
+- 找到新的最佳实践配置
+- 更新监控指标阈值
+
+**必须同时更新两者**:
+- 配置文件的重大变更（需要在演进文档记录变更，在调优文档记录实验）
+- 训练系统架构调整（演进文档记录架构，调优文档更新实验方法）
+
+### 示例1：模块接口文档 + 演进文档
+
+**模块接口文档** (docs/modules/ppo_training_system.md):
+```markdown
+# PPO训练系统模块接口文档
+
+## 核心组件
+- 配置文件: `configs/revolutionary_collapse_prevention.json`
+- 训练入口: `vidur/simulator.py`
+- PPO Scheduler: `vidur/scheduler/global_scheduler/ppo_scheduler_modular.py`
+
+## 关键参数
+- `lr`: 学习率，推荐范围1e-4到4e-4
+- `clip_ratio`: PPO clip系数，标准值0.2-0.3
+- `expert_guidance_weight`: Expert guidance权重，建议≤0.5
+
+## 使用示例
+python vidur/simulator.py --config configs/revolutionary_collapse_prevention.json --training_steps 20000
+```
+
+**对应演进文档** (docs/modules/evolution/ppo_training_system_evolution.md):
+```markdown
+# PPO训练系统演进史
+
+## [2025-10-01] - 参数优化: 修复训练失败问题
+
+### 变更概述
+- **改动原因**: v3.0.0训练完全失败 (Entropy=1.14, ExplainedVar=0.12)
+- **影响范围**: `configs/revolutionary_collapse_prevention.json` (所有PPO参数)
+- **向后兼容性**: 直接修改配置,保持架构不变
+
+### 具体变更
+1. **PPO Hyperparameters优化**:
+   - lr: 0.0003 → 0.0004 (+33%)
+   - clip_ratio: 0.2 → 0.3 (+50%)
+   - epochs: 8 → 12 (+50%)
+
+2. **Forced-random机制降低**:
+   - expert_guidance_weight: 1.5 → 0.5 (-67%)
+   - 文件位置: `configs/revolutionary_collapse_prevention.json:125-126`
+```
+
+### 示例2：调优文档
+
+**调优文档** (docs/hyperparameter_tuning_log.md):
+```markdown
+## 最新调参记录
+
+### ❌ 实验6: v3.0.0 Revolutionary配置训练完全失败 (2025-09-30)
+
+**配置**:
+{
+  "lr": 0.0003,
+  "clip_ratio": 0.2,
+  "expert_guidance_weight": 1.5
+}
+
+**结果**:
+- ❌ Entropy = 1.14: policy未收敛
+- ❌ ClipFraction = 0.88: 学习效率极低
+
+**教训**:
+- ⚠️ 不要同时使用多个forced-random机制
+- ⚠️ History shortcut > 0.7会bypass学习
+
+### ✅ 实验7: v3.1.0 优化配置 (2025-10-01)
+**配置**: 降低所有forced-random权重，提高PPO超参数
+**预期**: Entropy自然收敛, ExplainedVar>0.6
+```
+
 ## 🚨 核心编程规范 - 严格执行
 
 ### 八荣八耻编程基本原则
@@ -195,9 +495,155 @@ scripts/train_model.sh:     # 脚本仅做调用
 ## 🔌 新功能接入标准化流程 - 严格执行
 
 ### 核心原则
-遵循**配置-架构-main接口-代码-验证五步法**，确保新功能能正确集成到训练系统中，避免静默失效。
+遵循**表达式解析-配置-架构-main接口-代码-验证六步法**，确保新功能能正确集成到训练系统中，避免静默失效。
+
+### 配置系统架构概述
+
+系统使用**动态表达式配置**机制，支持参数间的引用和计算：
+
+```
+完整配置流程:
+第0步: 表达式解析    → 将 "#{...}" 表达式计算为实际数值
+第1步: 配置层面验证  → 检查JSON结构和三层配置要求
+第2步: 配置架构验证  → 验证Scheduler类型和Config类继承
+第2B步: CLI参数转换  → training_config.py将JSON转为命令行参数
+第3步: vidur.main接口 → CLI参数解析为SimulationConfig对象
+第4步: 代码集成验证  → Scheduler初始化并使用参数
+第5步: 运行验证      → 确认功能实际生效
+```
 
 ### 强制检查清单
+
+#### 第零步：配置表达式解析 🔢 (最先执行!)
+
+**作用**: 在配置传递给任何组件前，先解析所有动态表达式，实现参数间的自动计算和同步。
+
+**文件**: `vidur/config/config_expression_parser.py`
+
+1. **表达式语法规则**
+   ```json
+   {
+     "training_schedule": {
+       "total_steps": 50000,
+       "rollout_length": 256,
+       "training_phases": {
+         "exploration_ratio": 0.3,
+         "balance_ratio": 0.5,
+         "convergence_ratio": 0.2
+       },
+       "analysis_windows": {
+         "short_term": 0.2,
+         "medium_term": 0.8,
+         "immediate": 0.04
+       }
+     },
+
+     "ppo_config": {
+       // ✅ 引用单个参数
+       "rollout_len": "#{training_schedule.rollout_length}",
+
+       // ✅ 支持数学运算
+       "learning_rate_schedule": {
+         "warmup_steps": "#{training_schedule.total_steps * training_schedule.training_phases.exploration_ratio}"
+       }
+     },
+
+     "cluster_config": {
+       "global_scheduler_config": {
+         // ✅ 复合表达式
+         "action_balance_window": "#{training_schedule.rollout_length * training_schedule.analysis_windows.short_term}",
+
+         // ✅ 多级运算
+         "detection_window": "#{training_schedule.rollout_length * training_schedule.analysis_windows.immediate}"
+       }
+     }
+   }
+   ```
+
+2. **表达式解析流程**
+   ```python
+   # src/core/utils/infrastructure/config/training_config.py:26-37
+   def load_config(config_path: str) -> Dict:
+       """训练脚本首先调用此函数，表达式在这里被解析"""
+       from vidur.config.config_expression_parser import load_config_with_expressions
+
+       # 🔥 关键: 表达式解析在配置传递前完成
+       config = load_config_with_expressions(config_path)
+       return config
+
+   # vidur/config/config_expression_parser.py:271-293
+   def load_config_with_expressions(config_path: str) -> Dict[str, Any]:
+       # 1. 加载原始JSON
+       with open(config_path, 'r') as f:
+           config = json.load(f)
+
+       # 2. 验证training_schedule完整性
+       TrainingScheduleValidator.validate_training_schedule(config['training_schedule'])
+
+       # 3. 递归解析所有 "#{...}" 表达式
+       parser = ConfigExpressionParser()
+       resolved_config = parser.resolve_config_expressions(config)
+
+       return resolved_config
+   ```
+
+3. **解析示例**
+   ```json
+   原始配置:
+   {
+     "training_schedule": {
+       "total_steps": 50000,
+       "rollout_length": 256,
+       "training_phases": {"exploration_ratio": 0.3}
+     },
+     "ppo_config": {
+       "rollout_len": "#{training_schedule.rollout_length}",
+       "learning_rate_schedule": {
+         "warmup_steps": "#{training_schedule.total_steps * training_schedule.training_phases.exploration_ratio}"
+       }
+     }
+   }
+
+   解析后配置:
+   {
+     "training_schedule": {...},  // 保持不变
+     "ppo_config": {
+       "rollout_len": 256,         // ✅ 表达式 → 数值
+       "learning_rate_schedule": {
+         "warmup_steps": 15000     // ✅ 50000 * 0.3 = 15000 (自动取整)
+       }
+     }
+   }
+   ```
+
+4. **支持的数学运算**
+   - 基本运算: `+`, `-`, `*`, `/`, `%`, `**`
+   - 嵌套属性访问: `training_schedule.training_phases.exploration_ratio`
+   - 复合表达式: `total_steps * 0.8`, `rollout_length * analysis_windows.short_term`
+   - 自动类型推断: 包含`steps`、`window`等关键词的表达式结果自动取整
+
+5. **表达式解析验证**
+   ```bash
+   # 验证表达式解析正确性
+   python -c "
+   from vidur.config.config_expression_parser import load_config_with_expressions
+   config = load_config_with_expressions('configs/revolutionary_collapse_prevention.json')
+   print('rollout_len:', config['ppo_config']['rollout_len'])
+   print('warmup_steps:', config['ppo_config']['learning_rate_schedule']['warmup_steps'])
+   print('action_balance_window:', config['cluster_config']['global_scheduler_config']['action_balance_window'])
+   "
+   ```
+
+6. **表达式系统优势**
+   - ✅ **统一配置源**: 所有时间窗口、步数从`training_schedule`统一计算
+   - ✅ **自动同步**: 修改`total_steps`时，所有依赖参数自动重新计算
+   - ✅ **配置可读**: 表达式直接展示参数关系，如`warmup_steps = total_steps * 0.3`
+   - ✅ **避免不一致**: 消除手动计算导致的配置不一致问题
+
+7. **新功能配置注意事项**
+   - 如果新功能参数依赖`training_schedule`，**必须使用表达式语法**
+   - 如果新功能参数是固定值，直接写数值即可
+   - 表达式解析发生在所有配置处理之前，后续步骤看到的都是解析后的数值
 
 #### 第一步：配置层面验证 ✅
 1. **JSON配置结构检查**
@@ -441,9 +887,16 @@ scripts/train_model.sh:     # 脚本仅做调用
 
 ### 必须检查的关键点 🎯
 
+0. **表达式解析正确性** 🔢 (最先检查!)
+   - 表达式语法正确: `"#{training_schedule.field}"`
+   - training_schedule完整性验证通过
+   - 表达式计算结果符合预期(步数参数自动取整)
+   - 验证命令: `python -c "from vidur.config.config_expression_parser import load_config_with_expressions; config = load_config_with_expressions('configs/config.json'); print(config['ppo_config']['rollout_len'])"`
+
 1. **JSON配置结构正确性**
    - 扁平字段结构
    - 正确的scheduler_type指定
+   - 三层配置结构遵循: training → ppo_config → cluster_config.global_scheduler_config
 
 2. **Config类字段完整性**
    - 字段名与JSON完全匹配
@@ -451,6 +904,7 @@ scripts/train_model.sh:     # 脚本仅做调用
 
 3. **training_config.py转换完整性** 🚨
    - build_ppo_args函数包含新功能参数处理
+   - 表达式已在此步骤前解析完成(看到的是数值而非表达式)
    - 验证命令行参数生成正确：`python src/core/utils/infrastructure/config/training_config.py configs/your_config.json /tmp/test | grep new_feature`
 
 4. **vidur.main接口兼容性**
@@ -458,7 +912,7 @@ scripts/train_model.sh:     # 脚本仅做调用
    - 字段传递无丢失
 
 5. **Scheduler集成正确性**
-   - 参数读取正确
+   - 参数读取正确(getattr字段名与JSON一致)
    - 初始化条件明确
 
 6. **运行时验证**
@@ -469,6 +923,18 @@ scripts/train_model.sh:     # 脚本仅做调用
 ### 调试命令序列 🛠️
 
 ```bash
+# 0. 表达式解析验证 (最先检查!)
+python -c "
+from vidur.config.config_expression_parser import load_config_with_expressions
+config = load_config_with_expressions('configs/config.json')
+print('=== 表达式解析结果 ===')
+print('rollout_len:', config.get('ppo_config', {}).get('rollout_len', 'NOT_FOUND'))
+print('warmup_steps:', config.get('ppo_config', {}).get('learning_rate_schedule', {}).get('warmup_steps', 'NOT_FOUND'))
+print('action_balance_window:', config.get('cluster_config', {}).get('global_scheduler_config', {}).get('action_balance_window', 'NOT_FOUND'))
+print()
+print('✅ 检查点: 所有表达式应已被解析为数值，不应有 \"#{...}\" 字符串')
+"
+
 # 1. JSON语法和三层配置结构验证
 python -c "
 import json
@@ -516,12 +982,25 @@ head -1 metrics.csv | grep new_feature
 ```
 
 **关键提醒**：
+0. **表达式解析优先** 🔢：配置加载时首先解析所有 `"#{...}"` 表达式，后续步骤看到的都是解析后的数值
 1. **三层配置结构严格遵循**：`training` → `ppo_config` → `cluster_config.global_scheduler_config`，参数放错层级会导致 `Error: 'field_name'` 错误
 2. **vidur.main接口兼容性**：还要在vidur.main中也添加对应接口才行！
-3. **完整验证链路**：必须验证从JSON配置到Scheduler实例的完整传递链路
+3. **完整验证链路**：必须验证从表达式解析 → JSON配置 → CLI参数 → Scheduler实例的完整传递链路
 4. **训练行为确认**：确保新功能确实改变训练行为，而不仅仅是"运行无错误"
 
-**配置层级记忆口诀**：
-- 第一层 `training`: 训练脚本基础参数（replicas, requests, qps）
-- 第二层 `ppo_config`: PPO算法参数（lr, gamma, clip等）
-- 第三层 `cluster_config`: 新功能和scheduler配置（新功能参数放这里）
+**配置完整流程记忆**：
+```
+第0步: 表达式解析 → "#{training_schedule.rollout_length}" 变为 256
+第1步: training层 → 训练脚本基础参数（replicas, requests, qps）
+第2步: ppo_config层 → PPO算法参数（lr, gamma, clip, rollout_len等）
+第3步: cluster_config层 → 新功能和scheduler配置（新功能参数放这里）
+第4步: CLI转换 → training_config.py将JSON转为--参数
+第5步: 对象解析 → vidur.main解析CLI参数为Config对象
+第6步: 组件初始化 → Scheduler读取Config并初始化组件
+```
+
+**表达式系统使用建议**：
+- ✅ 依赖training_schedule的参数使用表达式: `"rollout_len": "#{training_schedule.rollout_length}"`
+- ✅ 相对比例计算使用表达式: `"warmup_steps": "#{training_schedule.total_steps * 0.3}"`
+- ✅ 复合计算使用表达式: `"window": "#{training_schedule.rollout_length * training_schedule.analysis_windows.short_term}"`
+- ❌ 独立固定值不使用表达式: `"latency_weight": 1.0` (直接数值即可)
