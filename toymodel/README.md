@@ -6,12 +6,25 @@
 
 ### 运行仿真
 
+**Linux/macOS:**
 ```bash
 # 使用默认配置运行
 ./toymodel/scripts/run_toymodel.sh
 
 # 比较所有scheduler
 ./toymodel/scripts/compare_schedulers.sh
+```
+
+**Windows:**
+```cmd
+# 使用默认配置运行
+toymodel\scripts\run_toymodel.bat
+
+# 比较所有scheduler
+toymodel\scripts\compare_schedulers.bat
+
+# 训练PPO scheduler
+toymodel\scripts\train_ppo.bat
 ```
 
 ### 目录结构
@@ -122,11 +135,60 @@ lsof -ti :6006 | xargs kill -9
 - `random` - 随机路由
 - `round_robin` - 轮询路由
 - `shortest_queue` - 最短队列优先
+- `ppo` - PPO强化学习策略（需要先训练模型）
+
+## PPO 训练
+
+### 训练PPO模型
+
+```bash
+# Linux/macOS
+./toymodel/scripts/train_ppo.sh
+
+# Windows
+toymodel\scripts\train_ppo.bat
+```
+
+### PPO配置参数
+
+编辑 `toymodel/configs/ppo_config.json` 修改训练参数：
+
+```json
+{
+  "ppo": {
+    "n_requests": 3,           // 状态中包含每个队列前n个请求类型
+    "hidden_dim": 64,          // 神经网络隐藏层维度
+    "learning_rate": 3e-4,     // 学习率
+    "clip_ratio": 0.2,         // PPO裁剪参数
+    "entropy_coef": 0.01,      // 熵正则化系数
+    "value_coef": 0.5,         // 价值函数损失系数
+    "epochs": 4,               // PPO更新轮数
+    "num_episodes": 1000,      // 训练轮数
+    "eval_interval": 100,      // 评估间隔
+    "save_interval": 200       // 模型保存间隔
+  }
+}
+```
+
+### 使用训练好的PPO模型
+
+```json
+{
+  "scheduler": {
+    "type": "ppo",
+    "options": {
+      "model_path": "toymodel/outputs/models/ppo_model_latest.pt"
+    }
+  }
+}
+```
 
 ## 输出
 
 - **Metrics CSV**: `toymodel/outputs/metrics/experiment_metrics.csv`
 - **TensorBoard logs**: `toymodel/outputs/tensorboard/`
+- **PPO Models**: `toymodel/outputs/models/`
+- **Training Metrics**: `toymodel/outputs/eval/`
 
 ## 更多文档
 

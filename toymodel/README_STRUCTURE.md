@@ -12,28 +12,44 @@ toymodel/
 │   ├── environment.py           # M/M/1仿真环境
 │   ├── request_generator.py     # Poisson到达过程生成器
 │   ├── config.py                # 配置管理
-│   └── tensorboard_monitor.py   # TensorBoard监控
+│   ├── tensorboard_monitor.py   # TensorBoard监控
+│   └── rl_components/           # 强化学习组件
+│       ├── __init__.py
+│       ├── actor_critic.py      # Actor-Critic网络
+│       ├── ppo_trainer.py       # PPO训练器
+│       ├── rollout_buffer.py    # 经验缓冲区
+│       ├── state_builder.py     # 状态构建器
+│       └── reward_calculator.py # 奖励计算器
 │
 ├── schedulers/                  # 调度策略
 │   ├── __init__.py
 │   ├── base.py                  # 基础调度器
 │   ├── oracle.py                # 最优策略
-│   └── baselines.py             # 基线策略
+│   ├── baselines.py             # 基线策略
+│   └── ppo_scheduler.py         # PPO强化学习策略
 │
 ├── scripts/                     # 运行脚本
 │   ├── run_simulation.py        # 仿真主程序
 │   ├── compare_schedulers.py    # Scheduler对比工具
-│   ├── run_toymodel.sh          # Bash wrapper
-│   └── compare_schedulers.sh    # Bash wrapper
+│   ├── train_ppo.py             # PPO训练脚本
+│   ├── run_toymodel.sh          # Bash wrapper (Linux/macOS)
+│   ├── run_toymodel.bat         # Windows wrapper
+│   ├── compare_schedulers.sh    # Bash wrapper (Linux/macOS)
+│   ├── compare_schedulers.bat   # Windows wrapper
+│   ├── train_ppo.sh             # PPO训练 wrapper (Linux/macOS)
+│   └── train_ppo.bat            # PPO训练 wrapper (Windows)
 │
 ├── configs/                     # 配置文件
 │   ├── config.json              # 默认配置
+│   ├── ppo_config.json          # PPO训练配置
 │   ├── high_load.json           # 高负载场景
 │   └── balanced_load.json       # 均衡负载场景
 │
 ├── outputs/                     # 输出结果
 │   ├── metrics/                 # CSV导出
-│   └── tensorboard/             # TensorBoard日志
+│   ├── tensorboard/             # TensorBoard日志
+│   ├── models/                  # PPO训练模型
+│   └── eval/                    # 训练评估结果
 │
 ├── tests/                       # 单元测试
 │   ├── __init__.py
@@ -92,6 +108,7 @@ toymodel/tensorboard_monitor.py   → toymodel/src/tensorboard_monitor.py
 toymodel/run_simulation.py        → toymodel/scripts/run_simulation.py
 toymodel/compare_schedulers.py    → toymodel/scripts/compare_schedulers.py
 toymodel/scripts/*.sh             → toymodel/scripts/*.sh
+toymodel/scripts/*.bat            → toymodel/scripts/*.bat (Windows支持)
 
 configs/toymodel/config.json      → toymodel/configs/config.json
 

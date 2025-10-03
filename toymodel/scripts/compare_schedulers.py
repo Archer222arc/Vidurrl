@@ -15,6 +15,7 @@ from toymodel.schedulers import (
     RandomScheduler,
     RoundRobinScheduler,
     ShortestQueueScheduler,
+    PPOScheduler,
 )
 
 
@@ -36,6 +37,18 @@ def compare_schedulers(config_path: str):
         ('Round-Robin', RoundRobinScheduler(num_replicas=2)),
         ('Shortest Queue', ShortestQueueScheduler(num_replicas=2)),
     ]
+    
+    # Add PPO scheduler if model exists
+    ppo_model_path = "toymodel/outputs/models/ppo_model_latest.pt"
+    if Path(ppo_model_path).exists():
+        schedulers.append(('PPO', PPOScheduler(
+            num_replicas=2,
+            model_path=ppo_model_path,
+            n_requests=3
+        )))
+        print(f"Found PPO model: {ppo_model_path}")
+    else:
+        print(f"PPO model not found: {ppo_model_path} (skipping PPO comparison)")
 
     results = []
 

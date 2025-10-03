@@ -1,0 +1,57 @@
+{
+  "experiment": {
+    "name": "ppo_toymodel_training",
+    "description": "PPO training for toy model queue scheduling",
+    "seed": 42
+  },
+  "environment": {
+    "num_replicas": 2,
+    "max_time": 100.0,
+    "service_rates": {
+      "0": {"0": 10.0, "1": 5.0},
+      "1": {"0": 5.0, "1": 10.0}
+    },
+    "arrival_rates": {
+      "0": 6.0,
+      "1": 6.0
+    }
+  },
+  "scheduler": {
+    "type": "ppo",
+    "options": {
+      "n_requests": 3
+    }
+  },
+  "metrics": {
+    "save_csv": true,
+    "csv_path": "toymodel/outputs/metrics.csv",
+    "save_raw_data": true
+  },
+  "ppo": {
+    "n_requests": 3,
+    "hidden_dim": 64,
+    "learning_rate": 3e-4,
+    "clip_ratio": 0.2,
+    "entropy_coef": 0.5,
+    "value_coef": 0.1,
+    "epochs": 4,
+    "minibatch_size": 64,
+    "max_grad_norm": 0.5,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "rollout_length": 32,
+    "num_episodes": 200,
+    "eval_interval": 20,
+    "save_interval": 50,
+    "max_episode_length": 32,
+    "latency_weight": 1.0
+  },
+  "tensorboard": {
+    "enabled": true,
+    "log_dir": "toymodel/outputs/tensorboard",
+    "port": 6006
+  },
+  "output": {
+    "dir": "toymodel/outputs"
+  }
+}
