@@ -6,7 +6,7 @@
   },
   "environment": {
     "num_replicas": 2,
-    "max_time": 100.0,
+    "max_time": 500.0,
     "service_rates": {
       "0": {"0": 10.0, "1": 5.0},
       "1": {"0": 5.0, "1": 10.0}
@@ -30,9 +30,9 @@
   "ppo": {
     "n_requests": 3,
     "hidden_dim": 64,
-    "learning_rate": 3e-4,
+    "learning_rate": 1e-4,
     "clip_ratio": 0.2,
-    "entropy_coef": 0.5,
+    "entropy_coef": 0.01,
     "value_coef": 0.1,
     "epochs": 4,
     "minibatch_size": 64,
@@ -40,11 +40,14 @@
     "gamma": 0.99,
     "gae_lambda": 0.95,
     "rollout_length": 32,
-    "num_episodes": 200,
+    "num_episodes": 600,
     "eval_interval": 20,
     "save_interval": 50,
     "max_episode_length": 32,
-    "latency_weight": 1.0
+    "latency_weight": 1,
+          "use_prediction": true,
+          "prediction_weight": 1,
+          "predictor_type": "simple"
   },
   "tensorboard": {
     "enabled": true,

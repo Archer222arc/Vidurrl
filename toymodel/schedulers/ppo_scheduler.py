@@ -46,7 +46,7 @@ class PPOScheduler(BaseScheduler):
         self.state_builder = QueueStateBuilder(
             num_replicas=num_replicas, 
             n_requests=n_requests,
-            normalize=False
+            normalize=True
         )
         
         # Get dimensions from state builder
@@ -103,9 +103,10 @@ class PPOScheduler(BaseScheduler):
         state = self.state_builder.build_state(request, replicas)
         state = state.unsqueeze(0).to(self.device)  # Add batch dimension
         
-        # Get action from policy
+        # Get action from policy (deterministic for inference)
         with torch.no_grad():
-            action, _, _ = self.policy.get_action_and_value(state)
+            action_logits, _ = self.policy.forward(state)
+            action = torch.argmax(action_logits, dim=-1)
         
         # Convert to replica ID
         replica_id = action.item()

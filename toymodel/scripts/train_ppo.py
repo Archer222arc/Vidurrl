@@ -27,7 +27,8 @@ from toymodel.src.rl_components import (
     SimplePPOTrainer, 
     SimpleRolloutBuffer,
     QueueStateBuilder,
-    LatencyRewardCalculator
+    LatencyRewardCalculator,
+    create_latency_predictor
 )
 from toymodel.schedulers.ppo_scheduler import PPOScheduler
 
@@ -75,9 +76,28 @@ class PPOTrainer:
             n_requests=self.n_requests,
             normalize=True
         )
+        # Create latency predictor if enabled
+        use_prediction = ppo_config.get('use_prediction', False)
+        prediction_weight = ppo_config.get('prediction_weight', 0.5)
+        predictor_type = ppo_config.get('predictor_type', 'simple')
+        
+        if use_prediction:
+            latency_predictor = create_latency_predictor(
+                predictor_type=predictor_type,
+                prediction_weight=prediction_weight
+            )
+        else:
+            latency_predictor = None
+        
         self.reward_calculator = LatencyRewardCalculator(
-            latency_weight=ppo_config.get('latency_weight', 1.0)
+            latency_weight=ppo_config.get('latency_weight', 1.0),
+            use_prediction=use_prediction,
+            prediction_weight=prediction_weight,
+            latency_predictor=latency_predictor
         )
+        
+        # Store predictor for updating
+        self.latency_predictor = latency_predictor
         
         # Get dimensions from state builder
         self.state_dim = self.state_builder.get_state_dim()
@@ -131,6 +151,9 @@ class PPOTrainer:
         self.episode_lengths = []
         self.training_stats = []
         self.global_step = 0  # Global step counter for TensorBoard
+        
+        # Track all historical completed requests across all episodes
+        self.all_historical_requests = []
         
         # TensorBoard writer
         self.tb_writer = None
@@ -213,9 +236,17 @@ class PPOTrainer:
             # Route request
             self.env.route_request(request, action)
             
-            # Wait for request completion to get reward
-            # For simplicity, we'll use a simple reward based on routing decision
-            latency = 1.0 / self.env.replicas[action].get_service_rate(request.request_type)
+            # Use actual average latency from completed requests (recorded by environment)
+            # This matches the evaluation's latency definition and uses real data
+            if len(self.env.completed_requests) > 0:
+                # Calculate average latency from recent completed requests
+                recent_requests = self.env.completed_requests[-min(10, len(self.env.completed_requests)):]
+                avg_latency = np.mean([req.total_time for req in recent_requests])
+                latency = avg_latency
+            else:
+                # Fallback to theoretical service time if no completed requests yet
+                service_rate = self.env.replicas[action].get_service_rate(request.request_type)
+                latency = 1.0 / service_rate
             
             reward = self.reward_calculator.calculate_reward(
                 request, self.env.replicas, action, latency
@@ -243,6 +274,21 @@ class PPOTrainer:
         
         # Add final completed requests to statistics
         completed_requests.extend(self.env.completed_requests)
+        
+        # Add to historical tracking
+        self.all_historical_requests.extend(self.env.completed_requests)
+        
+        # Update latency predictor with completed requests
+        if self.latency_predictor is not None:
+            for req in self.env.completed_requests:
+                if req.is_completed and req.assigned_replica is not None:
+                    # Calculate actual processing time (service_time only)
+                    actual_processing_time = req.service_time
+                    self.latency_predictor.update_processing_time(
+                        replica_id=req.assigned_replica,
+                        request_type=req.request_type,
+                        actual_processing_time=actual_processing_time
+                    )
         
         return {
             'episode_reward': episode_reward,
@@ -289,47 +335,64 @@ class PPOTrainer:
     
     def evaluate_policy(self) -> Dict[str, float]:
         """
-        Evaluate current policy performance.
+        Evaluate current policy performance using average latency of all historical completed tasks.
         
         Returns:
             Dictionary of evaluation metrics
         """
-        # Create evaluation scheduler
-        eval_scheduler = PPOScheduler(
-            num_replicas=self.env.num_replicas,
-            n_requests=self.n_requests,
-            device=self.device
-        )
-        eval_scheduler.policy = self.policy
-        eval_scheduler.set_eval_mode()
-        
-        # Run evaluation episode
-        self.env.reset()
-        completed_requests = self.env.run_simulation(eval_scheduler.schedule)
-        
-        # Calculate metrics
-        if completed_requests:
-            latencies = [req.total_time for req in completed_requests]
-            routing_accuracy = sum(
-                1 for req in completed_requests 
+        # Use average latency from all historical completed requests across all episodes
+        if self.all_historical_requests:
+            # Get all historical completed requests from training
+            all_latencies = [req.total_time for req in self.all_historical_requests]
+            all_routing_accuracy = sum(
+                1 for req in self.all_historical_requests 
                 if req.assigned_replica == req.request_type
-            ) / len(completed_requests)
+            ) / len(self.all_historical_requests)
             
             metrics = {
-                'mean_latency': np.mean(latencies),
-                'p50_latency': np.percentile(latencies, 50),
-                'p99_latency': np.percentile(latencies, 99),
-                'routing_accuracy': routing_accuracy,
-                'total_requests': len(completed_requests)
+                'mean_latency': np.mean(all_latencies),
+                'p50_latency': np.percentile(all_latencies, 50),
+                'p99_latency': np.percentile(all_latencies, 99),
+                'routing_accuracy': all_routing_accuracy,
+                'total_requests': len(self.all_historical_requests)
             }
         else:
-            metrics = {
-                'mean_latency': 0.0,
-                'p50_latency': 0.0,
-                'p99_latency': 0.0,
-                'routing_accuracy': 0.0,
-                'total_requests': 0
-            }
+            # Fallback: run a quick evaluation episode
+            eval_scheduler = PPOScheduler(
+                num_replicas=self.env.num_replicas,
+                n_requests=self.n_requests,
+                device=self.device
+            )
+            eval_scheduler.policy = self.policy
+            eval_scheduler.set_eval_mode()
+            
+            # Run evaluation episode
+            self.env.reset()
+            completed_requests = self.env.run_simulation(eval_scheduler.schedule)
+            
+            # Calculate metrics
+            if completed_requests:
+                latencies = [req.total_time for req in completed_requests]
+                routing_accuracy = sum(
+                    1 for req in completed_requests 
+                    if req.assigned_replica == req.request_type
+                ) / len(completed_requests)
+                
+                metrics = {
+                    'mean_latency': np.mean(latencies),
+                    'p50_latency': np.percentile(latencies, 50),
+                    'p99_latency': np.percentile(latencies, 99),
+                    'routing_accuracy': routing_accuracy,
+                    'total_requests': len(completed_requests)
+                }
+            else:
+                metrics = {
+                    'mean_latency': 0.0,
+                    'p50_latency': 0.0,
+                    'p99_latency': 0.0,
+                    'routing_accuracy': 0.0,
+                    'total_requests': 0
+                }
         
         return metrics
     
@@ -430,6 +493,14 @@ class PPOTrainer:
                 print(f"  - Rollout length: {rollout_stats['buffer_size']}")
                 print(f"  - Completed requests: {rollout_stats['completed_requests']}")
                 
+                # Print predictor estimates for 4 combinations
+                if self.latency_predictor is not None and hasattr(self.latency_predictor, 'processing_times'):
+                    print(f"  - Predictor estimates:")
+                    for (replica_id, request_type), (avg_time, count) in self.latency_predictor.processing_times.items():
+                        print(f"    Replica {replica_id}, Type {request_type}: {avg_time:.3f} (samples: {count})")
+                    if not self.latency_predictor.processing_times:
+                        print(f"    No data yet (using defaults)")
+                
                 # Log to TensorBoard with organized groups
                 if self.tb_writer:
                     # Episode metrics
@@ -467,8 +538,28 @@ class PPOTrainer:
             # Evaluation
             if episode % self.eval_interval == 0:
                 eval_metrics = self.evaluate_policy()
-                print(f"Episode {episode} - Eval: Latency = {eval_metrics['mean_latency']:.3f}, "
-                      f"Accuracy = {eval_metrics['routing_accuracy']:.3f}")
+                
+                # Display historical average latency from all completed requests (aligned with compare_schedulers.py)
+                if self.all_historical_requests:
+                    # Calculate metrics exactly like compare_schedulers.py
+                    all_latencies = [req.total_time for req in self.all_historical_requests]
+                    all_routing_accuracy = sum(
+                        1 for req in self.all_historical_requests 
+                        if req.assigned_replica == req.request_type
+                    ) / len(self.all_historical_requests) * 100  # Convert to percentage like compare_schedulers.py
+                    
+                    mean_latency = np.mean(all_latencies)
+                    p50_latency = np.percentile(all_latencies, 50)
+                    p99_latency = np.percentile(all_latencies, 99)
+                    total_requests = len(self.all_historical_requests)
+                    
+                    print(f"Episode {episode} - Eval: Mean Latency = {mean_latency:.3f}, "
+                          f"P50 = {p50_latency:.3f}, P99 = {p99_latency:.3f} "
+                          f"(from {total_requests} historical completed requests), "
+                          f"Accuracy = {all_routing_accuracy:.1f}%")
+                else:
+                    print(f"Episode {episode} - Eval: Latency = {eval_metrics['mean_latency']:.3f}, "
+                          f"Accuracy = {eval_metrics['routing_accuracy']:.3f}")
                 
                 # Store evaluation metrics for final logging
                 self.eval_metrics = eval_metrics

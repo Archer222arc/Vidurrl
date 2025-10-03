@@ -41,11 +41,13 @@ def compare_schedulers(config_path: str):
     # Add PPO scheduler if model exists
     ppo_model_path = "toymodel/outputs/models/ppo_model_latest.pt"
     if Path(ppo_model_path).exists():
-        schedulers.append(('PPO', PPOScheduler(
+        ppo_scheduler = PPOScheduler(
             num_replicas=2,
             model_path=ppo_model_path,
             n_requests=3
-        )))
+        )
+        ppo_scheduler.set_eval_mode()  # Ensure evaluation mode
+        schedulers.append(('PPO', ppo_scheduler))
         print(f"Found PPO model: {ppo_model_path}")
     else:
         print(f"PPO model not found: {ppo_model_path} (skipping PPO comparison)")

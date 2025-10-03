@@ -190,6 +190,70 @@ toymodel\scripts\train_ppo.bat
 - **PPO Models**: `toymodel/outputs/models/`
 - **Training Metrics**: `toymodel/outputs/eval/`
 
+## PPO状态和奖励构造
+
+### 状态表示 (State Representation)
+
+PPO智能体观察的状态包含以下信息：
+
+```python
+state = [
+    queue_length_0,           # 队列0的长度
+    queue_length_1,           # 队列1的长度
+    queue_0_type_0,           # 队列0中第1个请求的类型
+    queue_0_type_1,           # 队列0中第2个请求的类型
+    queue_0_type_2,           # 队列0中第3个请求的类型
+    queue_1_type_0,           # 队列1中第1个请求的类型
+    queue_1_type_1,           # 队列1中第2个请求的类型
+    queue_1_type_2,           # 队列1中第3个请求的类型
+    current_request_type      # 当前请求的类型
+]
+```
+
+**状态维度**: 9 (2个队列长度 + 6个请求类型 + 1个当前请求类型)
+
+**状态归一化**: 使用运行统计进行Z-score归一化，确保训练稳定性
+
+### 奖励函数 (Reward Function)
+
+PPO智能体的奖励完全基于延迟性能：
+
+```python
+def calculate_reward(request, replicas, assigned_replica, latency):
+    # 1. 延迟奖励 (负值，延迟越低奖励越高)
+    latency_reward = -normalize_latency(latency) * latency_weight
+    
+    # 2. 预测奖励 (可选，基于预测的延迟)
+    if use_prediction:
+        predicted_latency = predictor.predict_latency(request, replica, replicas)
+        prediction_reward = -normalize_prediction(predicted_latency) * prediction_weight
+        total_reward = latency_reward + prediction_reward
+    else:
+        total_reward = latency_reward
+    
+    return total_reward
+```
+
+**延迟定义**: `total_time = completion_time - arrival_time` (队列时间 + 服务时间)
+
+**延迟计算**: 使用最近10个已完成请求的平均延迟，确保与评估指标一致
+
+**归一化**: 使用运行统计进行奖励归一化，提高训练稳定性
+
+### 动作空间 (Action Space)
+
+- **动作维度**: 2 (选择副本0或副本1)
+- **训练时**: 使用随机采样 (`dist.sample()`) 进行探索
+- **推理时**: 使用确定性选择 (`torch.argmax()`) 进行利用
+
+### 环境交互
+
+**服务时间生成**: 使用指数分布 `exponential(scale=1.0/service_rate)`
+
+**队列模拟**: 标准M/M/1队列，支持不同请求类型的服务率
+
+**时间推进**: 基于事件的离散时间模拟
+
 ## 更多文档
 
 - **接口文档**: `docs/interface.md`
