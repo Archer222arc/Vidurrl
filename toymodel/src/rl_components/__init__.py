@@ -10,21 +10,25 @@ from .ppo_trainer import SimplePPOTrainer
 from .rollout_buffer import SimpleRolloutBuffer
 from .state_builder import QueueStateBuilder
 from .reward_calculator import LatencyRewardCalculator
-from .latency_predictor import (
+from ..predictors import (
     BaseLatencyPredictor,
     SimpleLatencyPredictor,
+    SystemAwareLatencyPredictor,
+    NeuralLatencyPredictor,
     NoOpLatencyPredictor,
     create_latency_predictor
 )
 
 __all__ = [
     "SimpleActorCritic",
-    "SimplePPOTrainer", 
+    "SimplePPOTrainer",
     "SimpleRolloutBuffer",
     "QueueStateBuilder",
     "LatencyRewardCalculator",
     "BaseLatencyPredictor",
     "SimpleLatencyPredictor",
+    "SystemAwareLatencyPredictor",
+    "NeuralLatencyPredictor",
     "NoOpLatencyPredictor",
     "create_latency_predictor",
 ]

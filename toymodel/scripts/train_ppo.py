@@ -80,11 +80,15 @@ class PPOTrainer:
         use_prediction = ppo_config.get('use_prediction', False)
         prediction_weight = ppo_config.get('prediction_weight', 0.5)
         predictor_type = ppo_config.get('predictor_type', 'simple')
-        
+        impact_weight = ppo_config.get('impact_weight', 1.0)
+
         if use_prediction:
             latency_predictor = create_latency_predictor(
                 predictor_type=predictor_type,
-                prediction_weight=prediction_weight
+                prediction_weight=prediction_weight,
+                impact_weight=impact_weight,
+                num_replicas=config.environment.num_replicas,
+                num_request_types=len(config.environment.arrival_rates)
             )
         else:
             latency_predictor = None
@@ -248,10 +252,11 @@ class PPOTrainer:
                 service_rate = self.env.replicas[action].get_service_rate(request.request_type)
                 latency = 1.0 / service_rate
             
-            reward = self.reward_calculator.calculate_reward(
+            reward_dict = self.reward_calculator.calculate_reward(
                 request, self.env.replicas, action, latency
             )
-            
+            reward = reward_dict['total']
+
             # Add to buffer
             self.rollout_buffer.add(
                 state=state,

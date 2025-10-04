@@ -40,14 +40,15 @@
     "gamma": 0.99,
     "gae_lambda": 0.95,
     "rollout_length": 32,
-    "num_episodes": 600,
+    "num_episodes": 6000,
     "eval_interval": 20,
     "save_interval": 50,
     "max_episode_length": 32,
     "latency_weight": 1,
-          "use_prediction": true,
-          "prediction_weight": 1,
-          "predictor_type": "simple"
+    "use_prediction": true,
+    "prediction_weight": 1,
+    "predictor_type": "system_aware",
+    "impact_weight": 1
   },
   "tensorboard": {
     "enabled": true,

@@ -8,7 +8,7 @@ import numpy as np
 from typing import List, Dict, Any, Optional
 
 from ..entities import Request, Replica
-from .latency_predictor import BaseLatencyPredictor
+from ..predictors import BaseLatencyPredictor
 
 
 class LatencyRewardCalculator:
@@ -58,24 +58,28 @@ class LatencyRewardCalculator:
         replicas: List[Replica],
         assigned_replica: int,
         latency: float
-    ) -> float:
+    ) -> Dict[str, float]:
         """
         Calculate reward for routing decision based on latency and optionally predicted latency.
-        
+
         Args:
             request: The routed request
             replicas: List of replica states
             assigned_replica: Assigned replica ID
             latency: Request latency (queue_time + service_time) - total time in system
-            
+
         Returns:
-            Calculated reward (negative, lower latency = higher reward)
+            Dictionary containing:
+                - 'total': Total reward (negative, lower latency = higher reward)
+                - 'latency': Actual latency reward component
+                - 'prediction': Predicted latency reward component (if enabled)
         """
         # Actual latency-based reward (negative, lower latency = higher reward)
         latency_reward = -self._normalize_latency(latency) * self.latency_weight
-        
+
         total_reward = latency_reward
-        
+        prediction_reward = 0.0
+
         # Add predicted latency reward if enabled
         if self.use_prediction and self.latency_predictor is not None:
             predicted_latency = self.latency_predictor.predict_latency(
@@ -83,8 +87,12 @@ class LatencyRewardCalculator:
             )
             prediction_reward = -self._normalize_prediction(predicted_latency) * self.prediction_weight
             total_reward += prediction_reward
-        
-        return total_reward
+
+        return {
+            'total': total_reward,
+            'latency': latency_reward,
+            'prediction': prediction_reward
+        }
     
     def _normalize_latency(self, latency: float) -> float:
         """
