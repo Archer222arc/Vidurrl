@@ -51,6 +51,23 @@ class TensorBoardConfig:
 
 
 @dataclass
+class OutputConfig:
+    """Output configuration."""
+    dir: str
+
+
+@dataclass
+class PPOConfig:
+    """PPO training configuration."""
+    def __init__(self, config_dict: Dict[str, Any]):
+        for key, value in config_dict.items():
+            setattr(self, key, value)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+
+@dataclass
 class ToyModelConfig:
     """
     Complete toy model configuration.
@@ -62,6 +79,8 @@ class ToyModelConfig:
     scheduler: SchedulerConfig
     metrics: MetricsConfig
     tensorboard: TensorBoardConfig
+    output: OutputConfig
+    ppo: PPOConfig
 
     @classmethod
     def from_json(cls, json_path: str) -> "ToyModelConfig":
@@ -149,12 +168,22 @@ class ToyModelConfig:
             clean_previous_runs=tb_dict.get('clean_previous_runs', True),
         )
 
+        # Parse output config
+        output_dict = config_dict.get('output', {'dir': 'toymodel/outputs'})
+        output = OutputConfig(dir=output_dict.get('dir', 'toymodel/outputs'))
+
+        # Parse PPO config
+        ppo_dict = config_dict.get('ppo', {})
+        ppo = PPOConfig(ppo_dict)
+
         return cls(
             experiment=experiment,
             environment=environment,
             scheduler=scheduler,
             metrics=metrics,
             tensorboard=tensorboard,
+            output=output,
+            ppo=ppo,
         )
 
     def validate(self) -> None:

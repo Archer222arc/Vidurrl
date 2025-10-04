@@ -1,7 +1,7 @@
 {
   "experiment": {
-    "name": "ppo_toymodel_training",
-    "description": "PPO training for toy model queue scheduling",
+    "name": "ppo_simple_predictor",
+    "description": "PPO training with simple latency predictor",
     "seed": 42
   },
   "environment": {
@@ -24,7 +24,7 @@
   },
   "metrics": {
     "save_csv": true,
-    "csv_path": "toymodel/outputs/metrics.csv",
+    "csv_path": "toymodel/outputs/simple_predictor/metrics.csv",
     "save_raw_data": true
   },
   "ppo": {
@@ -48,14 +48,14 @@
     "use_prediction": true,
     "prediction_weight": 1,
     "predictor_type": "simple",
-    "impact_weight": 1
+    "impact_weight": 0
   },
   "tensorboard": {
     "enabled": true,
-    "log_dir": "toymodel/outputs/tensorboard",
+    "log_dir": "toymodel/outputs/simple_predictor/tensorboard",
     "port": 6006
   },
   "output": {
-    "dir": "toymodel/outputs"
+    "dir": "toymodel/outputs/simple_predictor"
   }
 }

@@ -142,8 +142,8 @@ class PPOTrainer:
         self.save_interval = ppo_config.get('save_interval', 200)
         self.max_episode_length = ppo_config.get('max_episode_length', 1000)
         
-        # Output directories - ensure paths are relative to toymodel directory
-        self.output_dir = os.path.join('toymodel', 'outputs')
+        # Output directories - use config output_dir
+        self.output_dir = config.output.dir
         self.model_dir = os.path.join(self.output_dir, 'models')
         self.eval_dir = os.path.join(self.output_dir, 'eval')
         

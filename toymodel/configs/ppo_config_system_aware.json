@@ -1,7 +1,7 @@
 {
   "experiment": {
-    "name": "ppo_toymodel_training",
-    "description": "PPO training for toy model queue scheduling",
+    "name": "ppo_system_aware_predictor",
+    "description": "PPO training with system-aware latency predictor",
     "seed": 42
   },
   "environment": {
@@ -24,7 +24,7 @@
   },
   "metrics": {
     "save_csv": true,
-    "csv_path": "toymodel/outputs/metrics.csv",
+    "csv_path": "toymodel/outputs/system_aware_predictor/metrics.csv",
     "save_raw_data": true
   },
   "ppo": {
@@ -47,15 +47,15 @@
     "latency_weight": 1,
     "use_prediction": true,
     "prediction_weight": 1,
-    "predictor_type": "simple",
+    "predictor_type": "system_aware",
     "impact_weight": 1
   },
   "tensorboard": {
     "enabled": true,
-    "log_dir": "toymodel/outputs/tensorboard",
-    "port": 6006
+    "log_dir": "toymodel/outputs/system_aware_predictor/tensorboard",
+    "port": 6007
   },
   "output": {
-    "dir": "toymodel/outputs"
+    "dir": "toymodel/outputs/system_aware_predictor"
   }
 }
